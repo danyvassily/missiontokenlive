@@ -56,6 +56,14 @@ enum EngineBridge {
         static let fallback = Settings(budget: nil, warn: 80, critical: 95, hideDock: false)
     }
 
+    static func workTree() -> WorkTree {
+        let path = databaseURL().path
+        guard let raw = path.withCString({ mtl_worktree_json($0) }) else { return .empty }
+        defer { mtl_free_string(raw) }
+        let json = String(cString: raw)
+        return (try? JSONDecoder().decode(WorkTree.self, from: Data(json.utf8))) ?? .empty
+    }
+
     static func keyInventory() -> [ProviderKey] {
         guard let raw = mtl_keys_json() else { return [] }
         defer { mtl_free_string(raw) }

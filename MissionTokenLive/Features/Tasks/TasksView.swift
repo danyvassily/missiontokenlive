@@ -8,9 +8,15 @@ struct TasksView: View {
         VStack(spacing: 0) {
             ScreenHeader(
                 title: "Tâches",
-                subtitle: "\(store.filteredTasks.count) tâches · période : aujourd'hui"
+                subtitle: "\(store.filteredTasks.count) tâches · période : \(store.periodFilter.label.lowercased())"
             )
             HStack(spacing: 8) {
+                ForEach(TaskPeriod.allCases) { period in
+                    FilterChip(label: period.label, active: store.periodFilter == period) {
+                        store.periodFilter = period
+                    }
+                }
+                Rectangle().fill(Theme.border).frame(width: 1, height: 16)
                 FilterChip(label: "Toutes", active: store.statusFilter == nil) { store.statusFilter = nil }
                 FilterChip(label: "En cours", active: store.statusFilter == .running) { store.statusFilter = .running }
                 FilterChip(label: "Terminées", active: store.statusFilter == .completed) { store.statusFilter = .completed }
@@ -33,18 +39,26 @@ struct TasksView: View {
             Card(padding: 0) {
                 VStack(spacing: 0) {
                     TaskTableHeader()
-                    ForEach(store.filteredTasks) { task in
-                        TaskRow(task: task, isSelected: selected?.id == task.id)
-                            .onTapGesture { selected = task }
-                        Rectangle().fill(Theme.borderSoft).frame(height: 1)
+                    ScrollView(.vertical) {
+                        LazyVStack(spacing: 0) {
+                            ForEach(store.filteredTasks) { task in
+                                TaskRow(task: task, isSelected: selected?.id == task.id)
+                                    .contentShape(Rectangle())
+                                    .onTapGesture { selected = task }
+                                Rectangle().fill(Theme.borderSoft).frame(height: 1)
+                            }
+                            if store.filteredTasks.isEmpty {
+                                EmptyStateView(title: "Aucune tâche",
+                                               message: "Aucune tâche sur cette période avec ce filtre.")
+                                    .padding(.vertical, 40)
+                            }
+                        }
                     }
-                    if store.filteredTasks.isEmpty {
-                        EmptyStateView(title: "Aucune tâche", message: "Aucune tâche ne correspond au filtre courant.")
-                    }
+                    .frame(maxHeight: .infinity)
                 }
             }
             .padding(.horizontal, 24)
-            .padding(.bottom, 16)
+            .padding(.bottom, 8)
 
             HStack(spacing: 14) {
                 Text("\(store.filteredTasks.count) tâches").font(Theme.caption(10.5)).foregroundStyle(Theme.textTertiary)

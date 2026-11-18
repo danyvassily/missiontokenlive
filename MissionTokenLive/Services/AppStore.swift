@@ -43,15 +43,38 @@ enum Screen: String, CaseIterable, Identifiable {
 /// Tout vient du moteur Rust (`EngineBridge.snapshot()`). L'interface ne calcule ni
 /// coût ni token : elle affiche et met en forme.
 @MainActor
+enum TaskPeriod: String, CaseIterable, Identifiable {
+    case today, week, month, all
+    var id: String { rawValue }
+    nonisolated var label: String {
+        switch self {
+        case .today: return "Aujourd'hui"
+        case .week: return "7 jours"
+        case .month: return "30 jours"
+        case .all: return "Tout"
+        }
+    }
+    nonisolated var days: Int? {
+        switch self {
+        case .today: return 1
+        case .week: return 7
+        case .month: return 30
+        case .all: return nil
+        }
+    }
+}
+
 final class AppStore: ObservableObject {
     @Published private(set) var snapshot: Snapshot = .empty
     @Published var selection: Screen = .now
     @Published private(set) var lastRefresh: Date?
     @Published private(set) var engineVersion: String = ""
     @Published var searchText: String = ""
+    @Published var periodFilter: TaskPeriod = .today
     @Published var statusFilter: TaskStatus?
     @Published var showingDemoData: Bool = false
     @Published var settings: EngineBridge.Settings = .fallback
+    @Published var worktree: WorkTree = .empty
     @Published private(set) var brain: BrainStats = .unavailable
 
     private var timer: AnyCancellable?
@@ -129,6 +152,7 @@ final class AppStore: ObservableObject {
         let snap = isDemo ? (EngineBridge.snapshot() ?? .empty) : Self.liveSnapshot()
         snapshot = snap
         brain = EngineBridge.brainStats()
+        worktree = EngineBridge.workTree()
         lastRefresh = Date()
     }
 
@@ -253,6 +277,10 @@ final class AppStore: ObservableObject {
 
     var filteredTasks: [TaskItem] {
         var items = snapshot.tasks
+        if let days = periodFilter.days {
+            let limit = Calendar.current.date(byAdding: .day, value: -days, to: Date()) ?? .distantPast
+            items = items.filter { $0.started_at >= limit }
+        }
         if let statusFilter {
             items = items.filter { $0.status == statusFilter }
         }

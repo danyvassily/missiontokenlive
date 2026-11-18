@@ -10,6 +10,17 @@ struct FluxView: View {
     @EnvironmentObject private var store: AppStore
 
     var body: some View {
+        Group {
+            if store.worktree.available {
+                WorkTree3DView(tree: store.worktree)
+            } else {
+                fallback
+            }
+        }
+    }
+
+    /// Ancienne carte 2D, conservée pour le cas où la base d'Hermès est illisible.
+    private var fallback: some View {
         VStack(alignment: .leading, spacing: 0) {
             header
             TimelineView(.animation(minimumInterval: 1.0 / 30.0)) { timeline in

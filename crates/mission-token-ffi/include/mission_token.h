@@ -43,6 +43,9 @@ char *mtl_settings_json(const char *db_path);
 /* Enregistre les réglages (budget vide = aucun budget). 0 = succès. */
 int32_t mtl_save_settings(const char *db_path, const char *budget, int32_t warn_pct, int32_t critical_pct, int32_t hide_dock);
 
+/* Arborescence de travail (sessions, délégations, harnais) en JSON. NULL si indisponible. */
+char *mtl_worktree_json(const char *db_path);
+
 /* Inventaire des clés connues de ~/.hermes/.env, masquées (JSON). NULL si indisponible. */
 char *mtl_keys_json(void);
 

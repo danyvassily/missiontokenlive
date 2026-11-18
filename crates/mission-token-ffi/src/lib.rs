@@ -11,6 +11,7 @@
 
 pub mod brain;
 pub mod keys;
+pub mod worktree;
 
 use std::ffi::{c_char, CStr, CString};
 
