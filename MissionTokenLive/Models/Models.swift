@@ -16,6 +16,16 @@ enum Reliability: String, Codable, CaseIterable {
         }
     }
 
+    /// Rang de fiabilité : plus élevé = moins fiable (le pire l'emporte dans un agrégat).
+    var rank: Int {
+        switch self {
+        case .real: return 0
+        case .calculated: return 1
+        case .estimated: return 2
+        case .unavailable: return 3
+        }
+    }
+
     var tint: Color {
         switch self {
         case .real: return Theme.ok

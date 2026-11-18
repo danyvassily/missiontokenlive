@@ -56,17 +56,104 @@ final class AppStore: ObservableObject {
             selection = screen
         }
         engineVersion = EngineBridge.version
-        EngineBridge.seedDemoIfNeeded()
+        if ProcessInfo.processInfo.environment["MTL_DEMO"] == "1" {
+            EngineBridge.seedDemoIfNeeded()
+        }
         refresh()
         timer = Timer.publish(every: 2, on: .main, in: .common)
             .autoconnect()
             .sink { [weak self] _ in self?.refresh() }
     }
 
+    /// Mode démonstration : fixtures locales. Sinon, données réelles d'Hermès.
+    var isDemo: Bool { ProcessInfo.processInfo.environment["MTL_DEMO"] == "1" }
+
     func refresh() {
-        guard let snap = EngineBridge.snapshot() else { return }
+        let snap = isDemo ? (EngineBridge.snapshot() ?? .empty) : Self.liveSnapshot()
         snapshot = snap
         lastRefresh = Date()
+    }
+
+    /// Construit un instantané à partir des sources réelles, sans jamais inventer de coût.
+    ///
+    /// - tâches : sessions Hermès (`tokens` réels, coût `Non disponible` ou `Calculé`)
+    /// - logiciels : présence locale
+    /// - agents : Hermès + un agent externe par logiciel détecté
+    /// - KPI : coût agrégé seulement s'il existe, sinon `—` avec l'étiquette `Non disponible`
+    static func liveSnapshot() -> Snapshot {
+        let tasks = EngineBridge.hermesTasks(limit: 120)
+        let software = EngineBridge.desktopActivity()
+
+        var agents: [Agent] = [
+            Agent(
+                id: "ag_hermes", name: "Hermès", kind: .orchestrator, status: .active,
+                parent_id: nil, provider: tasks.first?.provider, model: tasks.first?.model,
+                current_task_id: tasks.first(where: { $0.status == .running })?.id,
+                color_key: "accent/blue", started_at: tasks.first?.started_at
+            )
+        ]
+        for app in software where app.app != "hermes" && app.state != .closed {
+            agents.append(Agent(
+                id: "ag_\(app.app)", name: app.display_name, kind: .external,
+                status: app.presence_only ? .waiting : .active,
+                parent_id: nil, provider: nil, model: nil, current_task_id: nil,
+                color_key: app.presence_only ? "signal/warn" : "accent/violet",
+                started_at: nil
+            ))
+        }
+
+        // Coût du jour : uniquement les tâches dont le coût porte un montant.
+        let cal = Calendar.current
+        let todayTasks = tasks.filter { cal.isDateInToday($0.started_at) }
+        let known = todayTasks.compactMap { $0.cost.amount }
+        let costToday: Kpi
+        if known.isEmpty {
+            costToday = Kpi(key: "cost_today", label: "Coût aujourd'hui", value: "—",
+                            detail: "aucun coût exploitable dans Hermès", reliability: .unavailable, progress: nil)
+        } else {
+            let total = known.reduce(0, +)
+            let worst = todayTasks.map { $0.cost.reliability }.max { $0.rank < $1.rank } ?? .unavailable
+            costToday = Kpi(key: "cost_today", label: "Coût aujourd'hui", value: CostValue.formatFR(total),
+                            detail: nil, reliability: worst, progress: nil)
+        }
+
+        let tokens = tasks.reduce(UInt64(0)) { $0 + $1.tokens.total }
+        let kpis: [Kpi] = [
+            costToday,
+            Kpi(key: "tokens_month", label: "Tokens mesurés", value: tokensText(tokens),
+                detail: "\(tasks.count) sessions Hermès", reliability: tokens > 0 ? .real : .unavailable, progress: nil),
+            Kpi(key: "active_agents", label: "Agents actifs", value: "\(agents.filter { $0.status == .active }.count)",
+                detail: "\(software.filter { $0.state != .closed }.count) logiciels ouverts", reliability: .real, progress: nil)
+        ]
+
+        // Timeline dérivée des sessions récentes — aucun contenu de conversation.
+        let timeline: [UsageEvent] = tasks.prefix(12).map { task in
+            UsageEvent(
+                id: "ev_\(task.id)", at: task.ended_at ?? task.started_at,
+                agent_name: "Hermès",
+                kind: task.status == .failed ? .taskFailed : (task.status == .running ? .taskProgress : .taskCompleted),
+                message: task.title, tokens: task.tokens, cost: task.cost,
+                task_id: task.id, running: task.status == .running
+            )
+        }
+
+        // Providers observés dans les sessions : solde inconnu, donc Non disponible.
+        var seen: Set<String> = []
+        let providers: [Provider] = tasks.compactMap { task -> Provider? in
+            guard let name = task.provider, !seen.contains(name) else { return nil }
+            seen.insert(name)
+            return Provider(
+                id: "prov_\(name)", name: name, kind: .api, availability: .unknown,
+                active_model: task.model, cost_today: task.cost,
+                balance: CostValue(amount: nil, reliability: .unavailable,
+                                   source: "solde non interrogé — activer dans Réglages", pricing_version: nil),
+                balance_alert_pct: 20, keychain_ref: nil,
+                note: "Solde non disponible via API"
+            )
+        }
+
+        return Snapshot(generated_at: Date(), kpis: kpis, agents: agents, timeline: timeline,
+                        alerts: [], providers: providers, tasks: tasks, software: software, projects: [])
     }
 
     // MARK: - Sélections dérivées
