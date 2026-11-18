@@ -139,12 +139,17 @@ traverse la frontière : les panics sont rattrapés et renvoient `NULL`.
 
 L'écran **Providers** contient la carte « Clés présentes sur ce Mac » : elle lit `~/.hermes/.env`,
 affiche un nom, une famille et une valeur **masquée**, et permet d'importer la clé dans le
-**Trousseau macOS** (service `online.agorax.missiontokenlive.keys`).
+**coffre local de l'app** (`~/Library/Application Support/MissionTokenLive/keys.json`, dossier 0700, fichier 0600).
 
 - Aucune clé n'est affichée en clair, journalisée, exportée ou écrite dans la base SQLite.
 - Seules les variables d'une liste blanche peuvent être lues ; un nom inconnu est refusé (`mtl_key_value`).
 - Les jetons d'infrastructure (`TELEGRAM_BOT_TOKEN`, `HERMES_DASHBOARD_*`, `API_SERVER_KEY`) sont
   volontairement exclus : ce ne sont pas des providers.
+- Le Trousseau macOS a été écarté : l'app étant signée ad hoc, chaque compilation change son
+  identité et macOS affiche une demande d'autorisation bloquante à la lecture. Un fichier 0600
+  appartenant à l'utilisateur donne le même niveau de confidentialité pratique, sans friction.
+- Les soldes sont interrogés à la demande (`Balances.swift`) par des requêtes **gratuites en
+  lecture seule** : OpenRouter `/credits`, DeepSeek `/user/balance`, Abliteration `/models`.
 - Import en lot possible via `MTL_KEY_PAYLOAD=<fichier json>` : le fichier est supprimé après lecture
   et l'app écrit un rapport d'empreintes SHA-256 (jamais les valeurs).
 

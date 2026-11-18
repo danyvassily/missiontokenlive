@@ -70,6 +70,20 @@ final class AppStore: ObservableObject {
         if ProcessInfo.processInfo.environment["MTL_IMPORT_KEYS"] == "1" {
             Self.importAllKeys()
         }
+        if ProcessInfo.processInfo.environment["MTL_FETCH_BALANCES"] == "1" {
+            Task {
+                let list = await Balances.fetchAll()
+                let rows: [[String: Any]] = list.map {
+                    ["provider": $0.provider,
+                     "amount": $0.amount.map { $0 as Any } ?? NSNull(),
+                     "currency": $0.currency,
+                     "detail": $0.detail]
+                }
+                if let out = try? JSONSerialization.data(withJSONObject: rows, options: [.prettyPrinted]) {
+                    try? out.write(to: URL(fileURLWithPath: NSTemporaryDirectory() + "mtl_balances.json"))
+                }
+            }
+        }
         if let payload = ProcessInfo.processInfo.environment["MTL_KEY_PAYLOAD"] {
             Self.importPayload(at: payload)
         }
@@ -88,7 +102,7 @@ final class AppStore: ObservableObject {
     static func importAllKeys() {
         for key in EngineBridge.keyInventory() where key.present {
             guard let value = EngineBridge.keyValue(key.envVar) else { continue }
-            Keychain.store(value, account: key.envVar)
+            SecretStore.store(value, account: key.envVar)
         }
     }
 
@@ -102,7 +116,7 @@ final class AppStore: ObservableObject {
               let dict = try? JSONSerialization.jsonObject(with: data) as? [String: String] else { return }
         var report: [[String: Any]] = []
         for (account, value) in dict {
-            let stored = Keychain.store(value, account: account)
+            let stored = SecretStore.store(value, account: account)
             let digest = SHA256.hash(value)
             report.append(["account": account, "stored": stored, "sha256": digest])
         }

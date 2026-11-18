@@ -5,6 +5,8 @@ struct ProvidersView: View {
     @State private var keys: [ProviderKey] = []
     @State private var stored: Set<String> = []
     @State private var message: String = ""
+    @State private var balances: [ProviderBalance] = []
+    @State private var fetching = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -19,6 +21,7 @@ struct ProvidersView: View {
                             ProviderCard(provider: provider)
                         }
                     }
+                    balancesCard
                     keycard
                     Card(padding: 16) {
                         VStack(alignment: .leading, spacing: 10) {
@@ -51,8 +54,15 @@ struct ProvidersView: View {
     }
 
     private func load() {
+        if ProcessInfo.processInfo.environment["MTL_FETCH_BALANCES"] == "1", balances.isEmpty {
+            fetching = true
+            Task {
+                balances = await Balances.fetchAll()
+                fetching = false
+            }
+        }
         keys = EngineBridge.keyInventory()
-        stored = Set(keys.map(\.envVar).filter { Keychain.has(account: $0) })
+        stored = Set(keys.map(\.envVar).filter { SecretStore.has($0) })
     }
 
     private func importKey(_ key: ProviderKey) {
@@ -60,11 +70,56 @@ struct ProvidersView: View {
             message = "Lecture impossible pour \(key.provider)."
             return
         }
-        if Keychain.store(value, account: key.envVar) {
+        if SecretStore.store(value, account: key.envVar) {
             stored.insert(key.envVar)
-            message = "\(key.provider) : clé placée dans le Trousseau."
+            message = "\(key.provider) : clé enregistrée dans le coffre local."
         } else {
             message = "\(key.provider) : le Trousseau a refusé l'écriture."
+        }
+    }
+
+    private var balancesCard: some View {
+        Card(padding: 16) {
+            VStack(alignment: .leading, spacing: 10) {
+                HStack(spacing: 8) {
+                    Image(systemName: "creditcard").font(.system(size: 11)).foregroundStyle(Theme.accent)
+                    Text("Soldes réels").font(Theme.section(14)).foregroundStyle(Theme.textPrimary)
+                    Spacer()
+                    Button(fetching ? "Interrogation…" : "Interroger") {
+                        guard !fetching else { return }
+                        fetching = true
+                        Task {
+                            balances = await Balances.fetchAll()
+                            fetching = false
+                        }
+                    }
+                    .buttonStyle(.plain)
+                    .font(Theme.caption(10.5)).foregroundStyle(Theme.textPrimary)
+                    .padding(.horizontal, 10).padding(.vertical, 4)
+                    .background(Theme.field).clipShape(Capsule())
+                    .disabled(fetching)
+                }
+                Text("Requêtes gratuites en lecture seule (aucune inférence, aucun coût). Sans réponse, le montant reste « Non disponible ».")
+                    .font(Theme.caption(10.5)).foregroundStyle(Theme.textTertiary)
+                    .fixedSize(horizontal: false, vertical: true)
+                if balances.isEmpty {
+                    Text(fetching ? "interrogation en cours…" : "aucune interrogation depuis le lancement")
+                        .font(Theme.micro()).foregroundStyle(Theme.textTertiary)
+                } else {
+                    ForEach(balances) { b in
+                        HStack(spacing: 10) {
+                            Circle().fill(b.amount == nil ? Theme.textTertiary : Theme.ok).frame(width: 6, height: 6)
+                            Text(b.provider).font(Theme.body(12)).foregroundStyle(Theme.textPrimary).frame(width: 110, alignment: .leading)
+                            Text(b.display).font(Theme.body(12, weight: .medium)).monospacedDigit()
+                                .foregroundStyle(b.amount == nil ? Theme.textTertiary : Theme.textPrimary)
+                            Spacer()
+                            Text(b.detail).font(Theme.micro()).foregroundStyle(Theme.textTertiary).lineLimit(1)
+                        }
+                        .padding(.vertical, 4)
+                        Rectangle().fill(Theme.borderSoft).frame(height: 1)
+                    }
+                }
+            }
         }
     }
 
@@ -75,11 +130,11 @@ struct ProvidersView: View {
                     Image(systemName: "key.horizontal").font(.system(size: 11)).foregroundStyle(Theme.accent)
                     Text("Clés présentes sur ce Mac").font(Theme.section(14)).foregroundStyle(Theme.textPrimary)
                     Spacer()
-                    Text("Trousseau macOS — jamais affichées")
+                    Text("coffre local — jamais affichées")
                         .font(Theme.micro()).foregroundStyle(Theme.textTertiary)
                 }
                 Text("Lecture de ~/.hermes/.env. Aucune valeur n'est affichée, journalisée ni écrite dans la base : "
-                     + "l'import copie la clé directement dans le Trousseau du système.")
+                     + "l'import copie la clé dans le coffre local de l'app (fichier 0600).")
                     .font(Theme.caption(10.5)).foregroundStyle(Theme.textTertiary)
                     .fixedSize(horizontal: false, vertical: true)
                 ForEach(keys) { key in
@@ -89,12 +144,12 @@ struct ProvidersView: View {
                             .frame(width: 6, height: 6)
                         Text(key.provider).font(Theme.body(12)).foregroundStyle(Theme.textPrimary).frame(width: 120, alignment: .leading)
                         Text(key.kind).font(Theme.micro()).foregroundStyle(Theme.textTertiary).frame(width: 54, alignment: .leading)
-                        Text(stored.contains(key.envVar) ? "•••• (Trousseau)" : (key.present ? key.masked : "absente"))
+                        Text(stored.contains(key.envVar) ? "•••• (coffre)" : (key.present ? key.masked : "absente"))
                             .font(Theme.micro()).monospaced()
                             .foregroundStyle(key.present ? Theme.textSecondary : Theme.textTertiary)
                         Spacer()
                         if stored.contains(key.envVar) {
-                            Label("dans le Trousseau", systemImage: "checkmark.seal.fill")
+                            Label("enregistrée", systemImage: "checkmark.seal.fill")
                                 .font(Theme.micro()).foregroundStyle(Theme.ok)
                         } else if key.present {
                             Button("Importer") { importKey(key) }
