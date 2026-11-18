@@ -64,6 +64,33 @@ fn dirs_home() -> PathBuf {
     std::env::var("HOME").map(PathBuf::from).unwrap_or_else(|_| PathBuf::from("/"))
 }
 
+/// Détecte les lignes de structure ou d'en-tête interne (notamment issues de `PEOPLE/*.md`)
+/// qui polluent le flux de faits : citations `>`, titres Markdown, mentions « USAGE INTERNE »,
+/// lignes de tableau vides ou sous-titres isolés se terminant par `:`.
+pub fn is_polluting_fact(text: &str, source: Option<&str>) -> bool {
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
+        return true;
+    }
+    if trimmed.starts_with('>') || trimmed.starts_with('#') {
+        return true;
+    }
+    let upper = trimmed.to_uppercase();
+    if upper.contains("USAGE INTERNE") || upper.contains("NEED-TO-KNOW") || upper.starts_with("SOURCE=") {
+        return true;
+    }
+    let is_people_source = source.map(|s| s.contains("PEOPLE/")).unwrap_or(false);
+    if is_people_source {
+        if trimmed.ends_with(':') && trimmed.chars().count() < 55 {
+            return true;
+        }
+        if trimmed.starts_with('|') && trimmed.contains("---") {
+            return true;
+        }
+    }
+    false
+}
+
 pub fn read_stats(path: Option<PathBuf>) -> BrainStats {
     let path = path.unwrap_or_else(default_path);
     let shown = path.to_string_lossy().replace(&dirs_home().to_string_lossy().to_string(), "~");
@@ -168,7 +195,7 @@ pub fn read_stats(path: Option<PathBuf>) -> BrainStats {
     if let Ok(mut st) = conn.prepare(
         "SELECT f.text, f.kind, f.entity, s.path FROM facts f
          LEFT JOIN sources s ON s.id = f.source_id
-         ORDER BY f.id DESC LIMIT 8",
+         ORDER BY f.id DESC LIMIT 80",
     ) {
         if let Ok(rows) = st.query_map([], |r| {
             let raw: Option<String> = r.get(3)?;
@@ -181,8 +208,29 @@ pub fn read_stats(path: Option<PathBuf>) -> BrainStats {
                 }),
             })
         }) {
-            out.recent = rows.flatten().collect();
+            out.recent = rows
+                .flatten()
+                .filter(|f| !is_polluting_fact(&f.text, f.source.as_deref()))
+                .take(8)
+                .collect();
         }
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn filters_structural_and_internal_people_lines() {
+        assert!(is_polluting_fact("> Fourni par Dany le 23/09/2026", Some("~/organisation/MEMORY/PEOPLE/eirini.md")));
+        assert!(is_polluting_fact("USAGE INTERNE STRICT — ne pas diffuser.", Some("~/organisation/MEMORY/PEOPLE/eirini-dynamiques.md")));
+        assert!(is_polluting_fact("## Dynamiques relationnelles", Some("~/organisation/MEMORY/PEOPLE/eirini.md")));
+        assert!(is_polluting_fact("Expression émotionnelle :", Some("~/organisation/MEMORY/PEOPLE/eirini-dynamiques.md")));
+        assert!(!is_polluting_fact(
+            "Validation émotionnelle préalable : Reconnaître ce qu'elle ressent avant d'aborder le fond pratique.",
+            Some("~/organisation/MEMORY/PEOPLE/eirini-dynamiques.md")
+        ));
+    }
 }

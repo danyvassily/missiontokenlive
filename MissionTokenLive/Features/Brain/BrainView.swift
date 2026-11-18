@@ -7,6 +7,7 @@ import SwiftUI
 /// via le moteur Rust. Aucune écriture, aucun appel réseau.
 struct BrainView: View {
     @EnvironmentObject private var store: AppStore
+    @State private var isCoverageExpanded: Bool = false
 
     private var brain: BrainStats { store.brain }
 
@@ -170,56 +171,79 @@ struct BrainView: View {
         let never = brain.never ?? []
         return Card {
             VStack(alignment: .leading, spacing: 12) {
-                HStack {
-                    Text("Accès et couverture")
-                        .font(Theme.body(13, weight: .medium))
-                        .foregroundStyle(Theme.textPrimary)
-                    Spacer()
-                    Text("\(sources.filter(\.present).count) / \(sources.count) sources lisibles")
-                        .font(Theme.micro())
-                        .foregroundStyle(Theme.textTertiary)
+                Button {
+                    withAnimation(.easeInOut(duration: 0.2)) {
+                        isCoverageExpanded.toggle()
+                    }
+                } label: {
+                    HStack(spacing: 8) {
+                        Image(systemName: isCoverageExpanded ? "chevron.down" : "chevron.right")
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundStyle(Theme.accent)
+                            .frame(width: 14)
+                        Text("Accès et couverture")
+                            .font(Theme.body(13, weight: .medium))
+                            .foregroundStyle(Theme.textPrimary)
+                        Spacer()
+                        Text("\(sources.filter(\.present).count) / \(sources.count) sources lisibles")
+                            .font(Theme.micro())
+                            .foregroundStyle(Theme.textTertiary)
+                        Text(isCoverageExpanded ? "Replier" : "Déplier")
+                            .font(Theme.micro())
+                            .foregroundStyle(Theme.textSecondary)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 3)
+                            .background(Theme.field)
+                            .clipShape(Capsule())
+                    }
+                    .contentShape(Rectangle())
                 }
-                HStack(alignment: .top, spacing: 24) {
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text("LU")
-                            .font(Theme.micro())
-                            .foregroundStyle(Theme.ok.opacity(0.85))
-                        ForEach(sources) { source in
-                            HStack(spacing: 8) {
-                                Circle()
-                                    .fill(source.present ? Theme.ok : Theme.warn)
-                                    .frame(width: 5, height: 5)
-                                Text(source.path)
-                                    .font(Theme.micro())
-                                    .foregroundStyle(Theme.textSecondary)
-                                    .lineLimit(1)
-                                    .truncationMode(.middle)
-                                Text("\(source.facts)")
-                                    .font(Theme.micro())
-                                    .monospacedDigit()
-                                    .foregroundStyle(Theme.textTertiary)
-                            }
-                        }
-                    }
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                .buttonStyle(.plain)
 
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text("JAMAIS LU")
-                            .font(Theme.micro())
-                            .foregroundStyle(Theme.warn.opacity(0.9))
-                        ForEach(never, id: \.self) { item in
-                            HStack(alignment: .top, spacing: 8) {
-                                Text("—")
-                                    .font(Theme.micro())
-                                    .foregroundStyle(Theme.textTertiary)
-                                Text(item)
-                                    .font(Theme.micro())
-                                    .foregroundStyle(Theme.textTertiary)
-                                    .fixedSize(horizontal: false, vertical: true)
+                if isCoverageExpanded {
+                    HStack(alignment: .top, spacing: 24) {
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text("LU")
+                                .font(Theme.micro())
+                                .foregroundStyle(Theme.ok.opacity(0.85))
+                            ForEach(sources) { source in
+                                HStack(spacing: 8) {
+                                    Circle()
+                                        .fill(source.present ? Theme.ok : Theme.warn)
+                                        .frame(width: 5, height: 5)
+                                    Text(source.path)
+                                        .font(Theme.micro())
+                                        .foregroundStyle(Theme.textSecondary)
+                                        .lineLimit(1)
+                                        .truncationMode(.middle)
+                                    Text("\(source.facts)")
+                                        .font(Theme.micro())
+                                        .monospacedDigit()
+                                        .foregroundStyle(Theme.textTertiary)
+                                }
                             }
                         }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text("JAMAIS LU")
+                                .font(Theme.micro())
+                                .foregroundStyle(Theme.warn.opacity(0.9))
+                            ForEach(never, id: \.self) { item in
+                                HStack(alignment: .top, spacing: 8) {
+                                    Text("—")
+                                        .font(Theme.micro())
+                                        .foregroundStyle(Theme.textTertiary)
+                                    Text(item)
+                                        .font(Theme.micro())
+                                        .foregroundStyle(Theme.textTertiary)
+                                        .fixedSize(horizontal: false, vertical: true)
+                                }
+                            }
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
                     }
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.top, 4)
                 }
             }
         }
