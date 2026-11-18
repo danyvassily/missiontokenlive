@@ -1,0 +1,5 @@
+module CMissionTokenFFI [system] {
+    header "shim.h"
+    link "mission_token_ffi"
+    export *
+}

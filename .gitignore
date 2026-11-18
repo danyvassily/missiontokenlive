@@ -1,0 +1,27 @@
+# Rust
+target/
+**/*.rs.bk
+# Swift / Xcode
+.build/
+.swiftpm/
+*.xcuserstate
+DerivedData/
+# Local data
+*.db
+*.db-shm
+*.db-wal
+!docs/fixtures/*.db
+# Secrets
+.env
+.env.*
+*.pem
+*.key
+# macOS
+.DS_Store
+# Build artefacts
+dist/
+renders/*.png
+!docs/design/*.png
+
+# Bibliothèque statique copiée par scripts/build.sh
+Sources/CMissionTokenFFI/lib/
