@@ -3,7 +3,7 @@ import SwiftUI
 import Combine
 
 enum Screen: String, CaseIterable, Identifiable {
-    case now, agents, tasks, costs, providers, software, projects, brain, settings
+    case now, agents, flux, tasks, costs, providers, software, projects, brain, settings
 
     var id: String { rawValue }
 
@@ -11,6 +11,7 @@ enum Screen: String, CaseIterable, Identifiable {
         switch self {
         case .now: return "Maintenant"
         case .agents: return "Agents"
+        case .flux: return "Flux"
         case .tasks: return "Tâches"
         case .costs: return "Coûts & usage"
         case .providers: return "Providers"
@@ -25,6 +26,7 @@ enum Screen: String, CaseIterable, Identifiable {
         switch self {
         case .now: return "dot.radiowaves.left.and.right"
         case .agents: return "point.3.connected.trianglepath.dotted"
+        case .flux: return "waveform.path.ecg.rectangle"
         case .tasks: return "list.bullet.rectangle"
         case .costs: return "chart.bar.xaxis"
         case .providers: return "creditcard"

@@ -16,6 +16,7 @@ struct BrainView: View {
                 header
                 if brain.available {
                     counters
+                    coverageCard
                     HStack(alignment: .top, spacing: 16) {
                         entitiesCard.frame(maxWidth: 380)
                         recentCard
@@ -50,7 +51,7 @@ struct BrainView: View {
         HStack(spacing: 14) {
             counter("Faits", "\(brain.facts)", "phrases atomiques", Theme.accent)
             counter("Chunks", "\(brain.chunks)", "paragraphes de contexte", Theme.violet)
-            counter("Sources", "\(brain.sources)", "fichiers de notes", Theme.ok)
+            counter("Sources", "\(brain.sourceCount)", "fichiers de notes", Theme.ok)
             counter("Entités", "\(brain.entities)", "personnes et projets", Theme.warn)
         }
     }
@@ -158,6 +159,67 @@ struct BrainView: View {
                     if fact.id != brain.recent.last?.id {
                         Divider().overlay(Theme.borderSoft)
                     }
+                }
+            }
+        }
+    }
+
+    /// Ce que gbrain voit — et ce qu'il ne voit jamais. La transparence fait partie du produit.
+    private var coverageCard: some View {
+        let sources = brain.sourceList ?? []
+        let never = brain.never ?? []
+        return Card {
+            VStack(alignment: .leading, spacing: 12) {
+                HStack {
+                    Text("Accès et couverture")
+                        .font(Theme.body(13, weight: .medium))
+                        .foregroundStyle(Theme.textPrimary)
+                    Spacer()
+                    Text("\(sources.filter(\.present).count) / \(sources.count) sources lisibles")
+                        .font(Theme.micro())
+                        .foregroundStyle(Theme.textTertiary)
+                }
+                HStack(alignment: .top, spacing: 24) {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("LU")
+                            .font(Theme.micro())
+                            .foregroundStyle(Theme.ok.opacity(0.85))
+                        ForEach(sources) { source in
+                            HStack(spacing: 8) {
+                                Circle()
+                                    .fill(source.present ? Theme.ok : Theme.warn)
+                                    .frame(width: 5, height: 5)
+                                Text(source.path)
+                                    .font(Theme.micro())
+                                    .foregroundStyle(Theme.textSecondary)
+                                    .lineLimit(1)
+                                    .truncationMode(.middle)
+                                Text("\(source.facts)")
+                                    .font(Theme.micro())
+                                    .monospacedDigit()
+                                    .foregroundStyle(Theme.textTertiary)
+                            }
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("JAMAIS LU")
+                            .font(Theme.micro())
+                            .foregroundStyle(Theme.warn.opacity(0.9))
+                        ForEach(never, id: \.self) { item in
+                            HStack(alignment: .top, spacing: 8) {
+                                Text("—")
+                                    .font(Theme.micro())
+                                    .foregroundStyle(Theme.textTertiary)
+                                Text(item)
+                                    .font(Theme.micro())
+                                    .foregroundStyle(Theme.textTertiary)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 }
             }
         }

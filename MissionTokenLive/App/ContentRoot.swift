@@ -22,6 +22,7 @@ struct ContentRoot: View {
         switch store.selection {
         case .now: NowView()
         case .agents: AgentsView()
+        case .flux: FluxView()
         case .tasks: TasksView()
         case .costs: CostsView()
         case .providers: ProvidersView()

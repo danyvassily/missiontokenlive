@@ -7,15 +7,18 @@ struct BrainStats: Codable {
     let path: String
     let facts: Int
     let chunks: Int
-    let sources: Int
+    let sourceCount: Int
     let entities: Int
     let last_ingest: String?
     let top_entities: [BrainEntity]
     let recent: [BrainFact]
+    let sourceList: [BrainSource]?
+    let never: [String]?
 
     static let unavailable = BrainStats(
         available: false, path: "~/.gbrain/gbrain.sqlite", facts: 0, chunks: 0,
-        sources: 0, entities: 0, last_ingest: nil, top_entities: [], recent: []
+        sourceCount: 0, entities: 0, last_ingest: nil, top_entities: [], recent: [],
+        sourceList: [], never: []
     )
 
     /// « il y a 12 min » — l'écran doit dire la fraîcheur, pas une date brute.
@@ -55,4 +58,13 @@ struct BrainFact: Codable, Identifiable {
         default: return "Note"
         }
     }
+}
+
+
+struct BrainSource: Codable, Identifiable {
+    let path: String
+    let kind: String
+    let facts: Int
+    let present: Bool
+    var id: String { path }
 }

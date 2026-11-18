@@ -23,17 +23,38 @@ pub struct BrainFact {
 }
 
 #[derive(Serialize)]
+pub struct BrainSource {
+    pub path: String,
+    pub kind: String,
+    pub facts: i64,
+    pub present: bool,
+}
+
+#[derive(Serialize)]
 pub struct BrainStats {
     pub available: bool,
     pub path: String,
     pub facts: i64,
     pub chunks: i64,
-    pub sources: i64,
+    #[serde(rename = "sourceCount")]
+    pub source_count: i64,
     pub entities: i64,
     pub last_ingest: Option<String>,
     pub top_entities: Vec<BrainEntity>,
     pub recent: Vec<BrainFact>,
+    #[serde(rename = "sourceList")]
+    pub sources: Vec<BrainSource>,
+    pub never: Vec<String>,
 }
+
+/// Périmètre exclu, affiché tel quel dans l'interface : l'utilisateur doit pouvoir
+/// vérifier ce que le cerveau ne lit pas, pas seulement ce qu'il lit.
+const NEVER: &[&str] = &[
+    "contenu des conversations et des prompts",
+    "captures d'écran, frappe clavier, presse-papiers",
+    "clés, jetons et mots de passe",
+    "données de santé, localisation, identité",
+];
 
 pub fn default_path() -> PathBuf {
     dirs_home().join(".gbrain").join("gbrain.sqlite")
@@ -51,11 +72,13 @@ pub fn read_stats(path: Option<PathBuf>) -> BrainStats {
         path: shown,
         facts: 0,
         chunks: 0,
-        sources: 0,
+        source_count: 0,
         entities: 0,
         last_ingest: None,
         top_entities: vec![],
         recent: vec![],
+        sources: vec![],
+        never: NEVER.iter().map(|s| s.to_string()).collect(),
     };
     if !path.exists() {
         return out;
@@ -71,7 +94,7 @@ pub fn read_stats(path: Option<PathBuf>) -> BrainStats {
     };
     out.facts = count("facts");
     out.chunks = count("chunks");
-    out.sources = count("sources");
+    out.source_count = count("sources");
     out.entities = conn
         .query_row("SELECT COUNT(DISTINCT entity) FROM facts WHERE entity IS NOT NULL", [], |r| r.get::<_, i64>(0))
         .unwrap_or(0);
@@ -89,6 +112,58 @@ pub fn read_stats(path: Option<PathBuf>) -> BrainStats {
             out.top_entities = rows.flatten().collect();
         }
     }
+
+    if let Ok(mut st) = conn.prepare(
+        "SELECT s.path, s.kind, COUNT(f.id) FROM sources s
+         LEFT JOIN facts f ON f.source_id = s.id
+         GROUP BY s.path ORDER BY COUNT(f.id) DESC",
+    ) {
+        if let Ok(rows) = st.query_map([], |r| {
+            let raw: String = r.get(0)?;
+            Ok(BrainSource {
+                path: raw.replace(&dirs_home().to_string_lossy().to_string(), "~"),
+                kind: r.get(1)?,
+                facts: r.get(2)?,
+                present: true,
+            })
+        }) {
+            out.sources = rows.flatten().collect();
+        }
+    }
+    // Sources déclarées dans la configuration mais absentes du disque.
+    if let Ok(raw_cfg) = std::fs::read_to_string(dirs_home().join(".gbrain").join("config.json")) {
+        if let Ok(cfg) = serde_json::from_str::<serde_json::Value>(&raw_cfg) {
+            if let Some(list) = cfg.get("sources").and_then(|v| v.as_array()) {
+                for entry in list {
+                    let Some(path) = entry.get("path").and_then(|v| v.as_str()) else { continue };
+                    let expanded = if let Some(rest) = path.strip_prefix("~/") {
+                        dirs_home().join(rest)
+                    } else {
+                        std::path::PathBuf::from(path)
+                    };
+                    let shown = path.to_string();
+                    if expanded.exists() {
+                        if !out.sources.iter().any(|s| s.path == shown) {
+                            out.sources.push(BrainSource {
+                                path: shown,
+                                kind: entry.get("kind").and_then(|v| v.as_str()).unwrap_or("memory").to_string(),
+                                facts: 0,
+                                present: true,
+                            });
+                        }
+                    } else {
+                        out.sources.push(BrainSource {
+                            path: shown,
+                            kind: entry.get("kind").and_then(|v| v.as_str()).unwrap_or("memory").to_string(),
+                            facts: 0,
+                            present: false,
+                        });
+                    }
+                }
+            }
+        }
+    }
+    out.sources.sort_by(|a, b| b.facts.cmp(&a.facts));
 
     if let Ok(mut st) = conn.prepare(
         "SELECT f.text, f.kind, f.entity, s.path FROM facts f

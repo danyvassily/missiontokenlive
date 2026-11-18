@@ -19,6 +19,7 @@ SwiftUI · moteur Rust · SQLite · pont C · macOS 14+ · Apple Silicon.
 | **Providers** | Cartes API, solde réel ou « Solde non disponible via API », abonnements à part |
 | **Logiciels** | Hermès, OpenCode, ChatGPT, Gemini, Antigravity : ouvert / premier plan / arrière-plan / fermé |
 | **Projets** | Actifs, archivés, corbeille 30 jours |
+| **Flux** | Carte animée : Hermès → logiciels → providers, pulsations = sessions en cours |
 | **Cerveau** | Corpus gbrain : faits, sources, entités, derniers faits (lecture seule) |
 | **Réglages** | Budget, seuils, providers, confidentialité, widget |
 
