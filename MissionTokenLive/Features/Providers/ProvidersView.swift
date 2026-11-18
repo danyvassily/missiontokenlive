@@ -5,8 +5,6 @@ struct ProvidersView: View {
     @State private var keys: [ProviderKey] = []
     @State private var stored: Set<String> = []
     @State private var message: String = ""
-    @State private var balances: [ProviderBalance] = []
-    @State private var fetching = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -54,15 +52,11 @@ struct ProvidersView: View {
     }
 
     private func load() {
-        if ProcessInfo.processInfo.environment["MTL_FETCH_BALANCES"] == "1", balances.isEmpty {
-            fetching = true
-            Task {
-                balances = await Balances.fetchAll()
-                fetching = false
-            }
-        }
         keys = EngineBridge.keyInventory()
         stored = Set(keys.map(\.envVar).filter { SecretStore.has($0) })
+        Task {
+            await store.fetchBalancesSilentlyOnce()
+        }
     }
 
     private func importKey(_ key: ProviderKey) {
@@ -73,8 +67,9 @@ struct ProvidersView: View {
         if SecretStore.store(value, account: key.envVar) {
             stored.insert(key.envVar)
             message = "\(key.provider) : clé enregistrée dans le coffre local."
+            Task { await store.reloadBalances() }
         } else {
-            message = "\(key.provider) : le Trousseau a refusé l'écriture."
+            message = "\(key.provider) : le coffre local a refusé l'écriture."
         }
     }
 
@@ -84,36 +79,46 @@ struct ProvidersView: View {
                 HStack(spacing: 8) {
                     Image(systemName: "creditcard").font(.system(size: 11)).foregroundStyle(Theme.accent)
                     Text("Soldes réels").font(Theme.section(14)).foregroundStyle(Theme.textPrimary)
+                    if let fetchedAt = store.balancesFetchedAt, let now = store.lastRefresh {
+                        Text("· \(ProviderBalance.relativeTimestamp(from: fetchedAt, now: now))")
+                            .font(Theme.micro())
+                            .foregroundStyle(Theme.textTertiary)
+                    } else if let fetchedAt = store.balancesFetchedAt {
+                        Text("· \(ProviderBalance.relativeTimestamp(from: fetchedAt))")
+                            .font(Theme.micro())
+                            .foregroundStyle(Theme.textTertiary)
+                    }
                     Spacer()
-                    Button(fetching ? "Interrogation…" : "Interroger") {
-                        guard !fetching else { return }
-                        fetching = true
+                    Button(store.fetchingBalances ? "Interrogation…" : "Interroger") {
                         Task {
-                            balances = await Balances.fetchAll()
-                            fetching = false
+                            await store.reloadBalances()
                         }
                     }
                     .buttonStyle(.plain)
                     .font(Theme.caption(10.5)).foregroundStyle(Theme.textPrimary)
                     .padding(.horizontal, 10).padding(.vertical, 4)
                     .background(Theme.field).clipShape(Capsule())
-                    .disabled(fetching)
+                    .disabled(store.fetchingBalances)
                 }
                 Text("Requêtes gratuites en lecture seule (aucune inférence, aucun coût). Sans réponse, le montant reste « Non disponible ».")
                     .font(Theme.caption(10.5)).foregroundStyle(Theme.textTertiary)
                     .fixedSize(horizontal: false, vertical: true)
-                if balances.isEmpty {
-                    Text(fetching ? "interrogation en cours…" : "aucune interrogation depuis le lancement")
+                if store.providerBalances.isEmpty {
+                    Text(store.fetchingBalances ? "interrogation en cours…" : "aucune interrogation depuis le lancement")
                         .font(Theme.micro()).foregroundStyle(Theme.textTertiary)
                 } else {
-                    ForEach(balances) { b in
+                    ForEach(store.providerBalances) { b in
                         HStack(spacing: 10) {
                             Circle().fill(b.amount == nil ? Theme.textTertiary : Theme.ok).frame(width: 6, height: 6)
                             Text(b.provider).font(Theme.body(12)).foregroundStyle(Theme.textPrimary).frame(width: 110, alignment: .leading)
                             Text(b.display).font(Theme.body(12, weight: .medium)).monospacedDigit()
                                 .foregroundStyle(b.amount == nil ? Theme.textTertiary : Theme.textPrimary)
+                            ReliabilityBadge(reliability: b.amount == nil ? .unavailable : .real)
                             Spacer()
                             Text(b.detail).font(Theme.micro()).foregroundStyle(Theme.textTertiary).lineLimit(1)
+                            Text(ProviderBalance.relativeTimestamp(from: b.fetchedAt, now: store.lastRefresh ?? Date()))
+                                .font(Theme.micro())
+                                .foregroundStyle(Theme.textTertiary)
                         }
                         .padding(.vertical, 4)
                         Rectangle().fill(Theme.borderSoft).frame(height: 1)

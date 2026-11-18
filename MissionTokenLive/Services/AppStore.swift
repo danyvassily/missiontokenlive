@@ -91,8 +91,12 @@ final class AppStore: ObservableObject {
     @Published var settings: EngineBridge.Settings = .fallback
     @Published var worktree: WorkTree = .empty
     @Published private(set) var brain: BrainStats = .unavailable
+    @Published private(set) var providerBalances: [ProviderBalance] = []
+    @Published private(set) var balancesFetchedAt: Date? = nil
+    @Published private(set) var fetchingBalances: Bool = false
 
     private var timer: AnyCancellable?
+    private var hasAutoFetchedBalances = false
 
     init() {
         // Permet de capturer un écran précis : MTL_SCREEN=agents ./MissionTokenLive
@@ -110,8 +114,8 @@ final class AppStore: ObservableObject {
         }
         if ProcessInfo.processInfo.environment["MTL_FETCH_BALANCES"] == "1" {
             Task {
-                let list = await Balances.fetchAll()
-                let rows: [[String: Any]] = list.map {
+                await fetchBalancesSilentlyOnce()
+                let rows: [[String: Any]] = providerBalances.map {
                     ["provider": $0.provider,
                      "amount": $0.amount.map { $0 as Any } ?? NSNull(),
                      "currency": $0.currency,
@@ -121,11 +125,18 @@ final class AppStore: ObservableObject {
                     try? out.write(to: URL(fileURLWithPath: NSTemporaryDirectory() + "mtl_balances.json"))
                 }
             }
+        } else {
+            Task { [weak self] in
+                await self?.fetchBalancesSilentlyOnce()
+            }
         }
         if let payload = ProcessInfo.processInfo.environment["MTL_KEY_PAYLOAD"] {
             Self.importPayload(at: payload)
         }
         settings = EngineBridge.settings()
+        if settings.hideDock {
+            NSApp?.setActivationPolicy(.accessory)
+        }
         refresh()
         timer = Timer.publish(every: 2, on: .main, in: .common)
             .autoconnect()
@@ -163,8 +174,26 @@ final class AppStore: ObservableObject {
         }
     }
 
+    func fetchBalancesSilentlyOnce() async {
+        guard !hasAutoFetchedBalances else { return }
+        hasAutoFetchedBalances = true
+        await reloadBalances()
+    }
+
+    func reloadBalances() async {
+        guard !fetchingBalances else { return }
+        fetchingBalances = true
+        let fetched = await Balances.fetchAll()
+        providerBalances = fetched
+        balancesFetchedAt = fetched.first?.fetchedAt ?? Date()
+        fetchingBalances = false
+        if !isDemo {
+            snapshot = Self.liveSnapshot(balances: fetched)
+        }
+    }
+
     func refresh() {
-        let snap = isDemo ? (EngineBridge.snapshot() ?? .empty) : Self.liveSnapshot()
+        let snap = isDemo ? (EngineBridge.snapshot() ?? .empty) : Self.liveSnapshot(balances: providerBalances)
         snapshot = snap
         brain = EngineBridge.brainStats()
         worktree = EngineBridge.workTree()
@@ -177,7 +206,7 @@ final class AppStore: ObservableObject {
     /// - logiciels : présence locale
     /// - agents : Hermès + un agent externe par logiciel détecté
     /// - KPI : coût agrégé seulement s'il existe, sinon `—` avec l'étiquette `Non disponible`
-    static func liveSnapshot() -> Snapshot {
+    static func liveSnapshot(balances: [ProviderBalance] = []) -> Snapshot {
         let tasks = EngineBridge.hermesTasks(limit: 120)
         let software = EngineBridge.desktopActivity()
 
@@ -235,18 +264,31 @@ final class AppStore: ObservableObject {
             )
         }
 
-        // Providers observés dans les sessions : solde inconnu, donc Non disponible.
+        // Providers observés dans les sessions : solde réel si interrogé, sinon Non disponible.
         var seen: Set<String> = []
         let providers: [Provider] = tasks.compactMap { task -> Provider? in
             guard let name = task.provider, !seen.contains(name) else { return nil }
             seen.insert(name)
+            let matchedBalance = balances.first { $0.provider.lowercased() == name.lowercased() }
+            let balanceValue: CostValue
+            let availability: Availability
+            if let b = matchedBalance, let amount = b.amount {
+                balanceValue = CostValue(amount: amount, reliability: .real, source: b.detail, pricing_version: nil)
+                availability = .available
+            } else if let b = matchedBalance {
+                balanceValue = CostValue(amount: nil, reliability: .unavailable, source: b.detail, pricing_version: nil)
+                availability = b.detail.contains("clé valide") ? .available : .unknown
+            } else {
+                balanceValue = CostValue(amount: nil, reliability: .unavailable,
+                                         source: "solde non interrogé — activer dans Réglages", pricing_version: nil)
+                availability = .unknown
+            }
             return Provider(
-                id: "prov_\(name)", name: name, kind: .api, availability: .unknown,
+                id: "prov_\(name)", name: name, kind: .api, availability: availability,
                 active_model: task.model, cost_today: task.cost,
-                balance: CostValue(amount: nil, reliability: .unavailable,
-                                   source: "solde non interrogé — activer dans Réglages", pricing_version: nil),
+                balance: balanceValue,
                 balance_alert_pct: 20, keychain_ref: nil,
-                note: "Solde non disponible via API"
+                note: matchedBalance?.detail ?? "Solde non disponible via API"
             )
         }
 

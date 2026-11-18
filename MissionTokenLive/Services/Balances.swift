@@ -23,6 +23,15 @@ struct ProviderBalance: Identifiable {
         f.locale = Locale(identifier: "fr_FR")
         return f.string(from: NSNumber(value: amount)) ?? String(format: "%.2f %@", amount, currency)
     }
+
+    /// Horodatage relatif en français : « interrogé il y a X min ».
+    static func relativeTimestamp(from date: Date, now: Date = Date()) -> String {
+        let minutes = max(0, Int(now.timeIntervalSince(date) / 60))
+        if minutes < 1 { return "interrogé il y a moins d'1 min" }
+        if minutes < 60 { return "interrogé il y a \(minutes) min" }
+        let hours = minutes / 60
+        return "interrogé il y a \(hours) h"
+    }
 }
 
 enum Balances {
