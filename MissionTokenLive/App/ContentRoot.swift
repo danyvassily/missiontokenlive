@@ -27,6 +27,7 @@ struct ContentRoot: View {
         case .providers: ProvidersView()
         case .software: SoftwareView()
         case .projects: ProjectsView()
+        case .brain: BrainView()
         case .settings: SettingsView()
         }
     }

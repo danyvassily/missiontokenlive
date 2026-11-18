@@ -19,6 +19,7 @@ SwiftUI · moteur Rust · SQLite · pont C · macOS 14+ · Apple Silicon.
 | **Providers** | Cartes API, solde réel ou « Solde non disponible via API », abonnements à part |
 | **Logiciels** | Hermès, OpenCode, ChatGPT, Gemini, Antigravity : ouvert / premier plan / arrière-plan / fermé |
 | **Projets** | Actifs, archivés, corbeille 30 jours |
+| **Cerveau** | Corpus gbrain : faits, sources, entités, derniers faits (lecture seule) |
 | **Réglages** | Budget, seuils, providers, confidentialité, widget |
 
 Plus une **pilule de barre de menus** à quatre états (calme, actif, multi-tâches, alerte) avec
@@ -132,6 +133,22 @@ traverse la frontière : les panics sont rattrapés et renvoient `NULL`.
    sinon laisser le coût `Non disponible`.
 3. Exposer la carte dans `ProvidersView` (données déjà fournies par le snapshot).
 4. Ajouter un test qui vérifie que l'absence de solde produit bien `Reliability::Unavailable`.
+
+## Cerveau partagé (gbrain)
+
+L'écran **Cerveau** lit `~/.gbrain/gbrain.sqlite` en lecture seule et montre ce que les agents
+savent réellement : nombre de faits atomiques, de chunks, de sources, entités les plus citées,
+derniers faits avec leur provenance.
+
+Ce corpus est produit par `~/gbrain` (SQLite FTS5), partagé par Hermès et les harnais de code via
+MCP (`gbrain_recall`, `gbrain_remember`). L'application **n'écrit jamais** dans le cerveau et
+n'appelle aucune API : elle observe.
+
+```bash
+~/gbrain/bin/gbrain ingest        # relit les notes (idempotent)
+~/gbrain/bin/gbrain recall "budget mensuel"
+curl -s http://127.0.0.1:8760/stats
+```
 
 ## Confidentialité
 

@@ -10,6 +10,7 @@ name = "mission_token_ffi"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [dependencies]
+rusqlite = { version = "0.32", features = ["bundled"] }
 mission-token-core = { path = "../mission-token-core" }
 mission-token-storage = { path = "../mission-token-storage" }
 mission-token-collectors = { path = "../mission-token-collectors" }

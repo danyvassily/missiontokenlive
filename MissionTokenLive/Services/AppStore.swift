@@ -3,7 +3,7 @@ import SwiftUI
 import Combine
 
 enum Screen: String, CaseIterable, Identifiable {
-    case now, agents, tasks, costs, providers, software, projects, settings
+    case now, agents, tasks, costs, providers, software, projects, brain, settings
 
     var id: String { rawValue }
 
@@ -16,6 +16,7 @@ enum Screen: String, CaseIterable, Identifiable {
         case .providers: return "Providers"
         case .software: return "Logiciels"
         case .projects: return "Projets"
+        case .brain: return "Cerveau"
         case .settings: return "Réglages"
         }
     }
@@ -29,6 +30,7 @@ enum Screen: String, CaseIterable, Identifiable {
         case .providers: return "creditcard"
         case .software: return "macwindow.on.rectangle"
         case .projects: return "folder"
+        case .brain: return "brain.head.profile"
         case .settings: return "gearshape"
         }
     }
@@ -48,6 +50,7 @@ final class AppStore: ObservableObject {
     @Published var statusFilter: TaskStatus?
     @Published var showingDemoData: Bool = false
     @Published var settings: EngineBridge.Settings = .fallback
+    @Published private(set) var brain: BrainStats = .unavailable
 
     private var timer: AnyCancellable?
 
@@ -75,6 +78,7 @@ final class AppStore: ObservableObject {
     func refresh() {
         let snap = isDemo ? (EngineBridge.snapshot() ?? .empty) : Self.liveSnapshot()
         snapshot = snap
+        brain = EngineBridge.brainStats()
         lastRefresh = Date()
     }
 

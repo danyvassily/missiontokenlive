@@ -56,6 +56,13 @@ enum EngineBridge {
         static let fallback = Settings(budget: nil, warn: 80, critical: 95, hideDock: false)
     }
 
+    static func brainStats() -> BrainStats {
+        guard let c = mtl_brain_json() else { return .unavailable }
+        defer { mtl_free_string(c) }
+        let json = String(cString: c)
+        return (try? JSONDecoder().decode(BrainStats.self, from: Data(json.utf8))) ?? .unavailable
+    }
+
     static func settings() -> Settings {
         let path = databaseURL().path
         guard let c = path.withCString({ mtl_settings_json($0) }) else { return .fallback }

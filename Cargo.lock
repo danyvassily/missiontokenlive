@@ -271,6 +271,7 @@ dependencies = [
  "mission-token-collectors",
  "mission-token-core",
  "mission-token-storage",
+ "rusqlite",
  "serde",
  "serde_json",
  "tempfile",

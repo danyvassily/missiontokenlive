@@ -31,6 +31,9 @@ char *mtl_desktop_activity_json(void);
  * 0 = succès, -1 = argument invalide, -2 = base, -3 = opération, -4 = action inconnue. */
 int32_t mtl_project_action(const char *db_path, const char *project_id, const char *action);
 
+/* État du cerveau gbrain (lecture seule, JSON). NULL si indisponible. */
+char *mtl_brain_json(void);
+
 /* Purge les corbeilles expirées. Renvoie le nombre purgé, ou -1. */
 int32_t mtl_sweep_trash(const char *db_path);
 

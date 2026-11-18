@@ -9,6 +9,8 @@
 //! Règle : toute chaîne renvoyée est allouée par Rust et doit être libérée par
 //! `mtl_free_string`. Aucune exception ne traverse la frontière FFI.
 
+pub mod brain;
+
 use std::ffi::{c_char, CStr, CString};
 
 fn to_c_string(s: String) -> *mut c_char {
@@ -127,6 +129,16 @@ pub extern "C" fn mtl_project_action(
     }
 }
 
+/// État du cerveau gbrain en JSON (lecture seule).
+#[no_mangle]
+pub extern "C" fn mtl_brain_json() -> *mut c_char {
+    let stats = brain::read_stats(None);
+    match serde_json::to_string(&stats) {
+        Ok(json) => to_c_string(json),
+        Err(_) => std::ptr::null_mut(),
+    }
+}
+
 /// Purge les projets dont la corbeille a expiré (30 jours). Renvoie le nombre purgé, ou -1.
 #[no_mangle]
 pub extern "C" fn mtl_sweep_trash(db_path: *const c_char) -> i32 {
@@ -180,6 +192,7 @@ pub extern "C" fn mtl_save_settings(
     }
 }
 
+#[cfg(test)]
 #[cfg(test)]
 mod tests {
     use super::*;
