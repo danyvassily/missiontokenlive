@@ -56,6 +56,15 @@ enum EngineBridge {
         static let fallback = Settings(budget: nil, warn: 80, critical: 95, hideDock: false)
     }
 
+    static func galaxy() -> Galaxy {
+        guard let pathPtr = mtl_galaxy_default_path() else { return .empty }
+        defer { mtl_free_string(pathPtr) }
+        guard let raw = mtl_galaxy_json(pathPtr) else { return .empty }
+        defer { mtl_free_string(raw) }
+        let json = String(cString: raw)
+        return (try? JSONDecoder().decode(Galaxy.self, from: Data(json.utf8))) ?? .empty
+    }
+
     static func workTree() -> WorkTree {
         let hermes = FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent(".hermes/state.db").path

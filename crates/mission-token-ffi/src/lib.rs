@@ -12,6 +12,7 @@
 pub mod brain;
 pub mod keys;
 pub mod worktree;
+pub mod galaxy;
 
 use std::ffi::{c_char, CStr, CString};
 

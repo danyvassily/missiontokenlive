@@ -46,6 +46,12 @@ int32_t mtl_save_settings(const char *db_path, const char *budget, int32_t warn_
 /* Arborescence de travail (sessions, délégations, harnais) en JSON. NULL si indisponible. */
 char *mtl_worktree_json(const char *db_path);
 
+/* Galaxie gbrain : sources, entités et échantillon de faits (JSON, lecture seule). */
+char *mtl_galaxy_json(const char *db_path);
+
+/* Chemin par défaut de la base gbrain. */
+char *mtl_galaxy_default_path(void);
+
 /* Inventaire des clés connues de ~/.hermes/.env, masquées (JSON). NULL si indisponible. */
 char *mtl_keys_json(void);
 

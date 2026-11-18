@@ -3,7 +3,7 @@ import SwiftUI
 import Combine
 
 enum Screen: String, CaseIterable, Identifiable {
-    case now, agents, flux, tasks, costs, providers, software, projects, brain, settings
+    case now, agents, flux, tasks, costs, providers, software, projects, brain, galaxy, settings
 
     var id: String { rawValue }
 
@@ -18,6 +18,7 @@ enum Screen: String, CaseIterable, Identifiable {
         case .software: return "Logiciels"
         case .projects: return "Projets"
         case .brain: return "Cerveau"
+        case .galaxy: return "Galaxie"
         case .settings: return "Réglages"
         }
     }
@@ -33,6 +34,7 @@ enum Screen: String, CaseIterable, Identifiable {
         case .software: return "macwindow.on.rectangle"
         case .projects: return "folder"
         case .brain: return "brain.head.profile"
+        case .galaxy: return "sparkles"
         case .settings: return "gearshape"
         }
     }
@@ -90,6 +92,7 @@ final class AppStore: ObservableObject {
     @Published var showingDemoData: Bool = false
     @Published var settings: EngineBridge.Settings = .fallback
     @Published var worktree: WorkTree = .empty
+    @Published var galaxy: Galaxy = .empty
     @Published private(set) var brain: BrainStats = .unavailable
     @Published private(set) var providerBalances: [ProviderBalance] = []
     @Published private(set) var balancesFetchedAt: Date? = nil
@@ -197,6 +200,7 @@ final class AppStore: ObservableObject {
         snapshot = snap
         brain = EngineBridge.brainStats()
         worktree = EngineBridge.workTree()
+        galaxy = EngineBridge.galaxy()
         lastRefresh = Date()
     }
 

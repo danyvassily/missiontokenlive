@@ -34,6 +34,7 @@ struct ContentRoot: View {
         case .software: SoftwareView()
         case .projects: ProjectsView()
         case .brain: BrainView()
+        case .galaxy: GalaxyView(galaxy: store.galaxy)
         case .settings: SettingsView()
         }
     }

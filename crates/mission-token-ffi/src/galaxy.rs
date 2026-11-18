@@ -1,0 +1,214 @@
+
+//! « Galaxie » de gbrain : agrégat de ce que le cerveau contient réellement.
+//!
+//! Lecture seule de `~/.gbrain/gbrain.sqlite`. On ne renvoie jamais le texte intégral :
+//! les faits sont tronqués à 70 caractères, et seuls un échantillon et des compteurs sortent.
+//! Aucun secret ne peut passer : la base a été écrite après redaction.
+
+use rusqlite::{Connection, OpenFlags};
+use serde::Serialize;
+use std::ffi::{CStr, CString};
+use std::os::raw::c_char;
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GNode {
+    pub id: String,
+    pub label: String,
+    pub kind: String,
+    pub weight: i64,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GEdge {
+    pub a: usize,
+    pub b: usize,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Galaxy {
+    pub available: bool,
+    pub facts: i64,
+    pub sources: i64,
+    pub entities: i64,
+    pub nodes: Vec<GNode>,
+    pub edges: Vec<GEdge>,
+}
+
+fn home() -> String {
+    std::env::var("HOME").unwrap_or_else(|_| "/Users/danyvassily".into())
+}
+
+fn short(text: &str, max: usize) -> String {
+    let clean = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    if clean.chars().count() <= max {
+        return clean;
+    }
+    let mut out: String = clean.chars().take(max).collect();
+    out.push('…');
+    out
+}
+
+fn basename(path: &str) -> String {
+    path.rsplit('/').next().unwrap_or(path).to_string()
+}
+
+pub fn build(db_path: &str) -> Galaxy {
+    let mut galaxy = Galaxy {
+        available: false,
+        facts: 0,
+        sources: 0,
+        entities: 0,
+        nodes: vec![],
+        edges: vec![],
+    };
+    let Ok(conn) = Connection::open_with_flags(db_path, OpenFlags::SQLITE_OPEN_READ_ONLY) else {
+        return galaxy;
+    };
+    galaxy.available = true;
+
+    let count = |sql: &str| -> i64 {
+        conn.query_row(sql, [], |r| r.get::<_, i64>(0)).unwrap_or(0)
+    };
+    galaxy.facts = count("SELECT COUNT(*) FROM facts");
+    galaxy.sources = count("SELECT COUNT(*) FROM sources");
+    galaxy.entities = count(
+        "SELECT COUNT(DISTINCT entity) FROM facts WHERE entity IS NOT NULL AND entity <> ''",
+    );
+
+    // Source 0 : gbrain lui-même, le centre de la galaxie.
+    galaxy.nodes.push(GNode {
+        id: "core".into(),
+        label: "gbrain".into(),
+        kind: "core".into(),
+        weight: galaxy.facts,
+    });
+
+    // Couche 1 : sources, groupées par type pour rester lisible.
+    let mut source_index: Vec<(String, usize)> = vec![];
+    if let Ok(mut stmt) = conn.prepare(
+        "SELECT kind, COUNT(*) c FROM sources GROUP BY kind ORDER BY c DESC",
+    ) {
+        if let Ok(rows) = stmt.query_map([], |r| {
+            Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?))
+        }) {
+            for (kind, c) in rows.flatten() {
+                let idx = galaxy.nodes.len();
+                galaxy.nodes.push(GNode {
+                    id: format!("src-{kind}"),
+                    label: format!("{} ({})", kind, c),
+                    kind: "source".into(),
+                    weight: c,
+                });
+                galaxy.edges.push(GEdge { a: 0, b: idx });
+                source_index.push((kind, idx));
+            }
+        }
+    }
+
+    // Couche 2 : entités les plus citées.
+    let mut entity_index: Vec<(String, usize)> = vec![];
+    if let Ok(mut stmt) = conn.prepare(
+        "SELECT entity, COUNT(*) c FROM facts WHERE entity IS NOT NULL AND entity <> ''
+         GROUP BY entity ORDER BY c DESC LIMIT 28",
+    ) {
+        if let Ok(rows) = stmt.query_map([], |r| {
+            Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?))
+        }) {
+            for (entity, c) in rows.flatten() {
+                let idx = galaxy.nodes.len();
+                galaxy.nodes.push(GNode {
+                    id: format!("ent-{entity}"),
+                    label: short(&entity, 24),
+                    kind: "entity".into(),
+                    weight: c,
+                });
+                galaxy.edges.push(GEdge { a: 0, b: idx });
+                entity_index.push((entity, idx));
+            }
+        }
+    }
+
+    // Couche 3 : échantillon de faits, reliés à leur entité et à leur source.
+    if let Ok(mut stmt) = conn.prepare(
+        "SELECT f.text, f.entity, s.kind FROM facts f JOIN sources s ON s.id = f.source_id
+         ORDER BY f.id DESC LIMIT 260",
+    ) {
+        if let Ok(rows) = stmt.query_map([], |r| {
+            Ok((
+                r.get::<_, String>(0)?,
+                r.get::<_, Option<String>>(1)?,
+                r.get::<_, String>(2)?,
+            ))
+        }) {
+            for (text, entity, src_kind) in rows.flatten() {
+                let idx = galaxy.nodes.len();
+                galaxy.nodes.push(GNode {
+                    id: format!("fact-{idx}"),
+                    label: short(&text, 70),
+                    kind: "fact".into(),
+                    weight: 1,
+                });
+                if let Some(entity) = entity {
+                    if let Some((_, target)) = entity_index.iter().find(|(e, _)| *e == entity) {
+                        galaxy.edges.push(GEdge { a: idx, b: *target });
+                    }
+                }
+                if let Some((_, target)) = source_index.iter().find(|(k, _)| *k == src_kind) {
+                    galaxy.edges.push(GEdge { a: idx, b: *target });
+                }
+            }
+        }
+    }
+
+    galaxy
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn mtl_galaxy_json(db_path: *const c_char) -> *mut c_char {
+    if db_path.is_null() {
+        return std::ptr::null_mut();
+    }
+    let Ok(path) = CStr::from_ptr(db_path).to_str() else {
+        return std::ptr::null_mut();
+    };
+    match serde_json::to_string(&build(path)) {
+        Ok(s) => CString::new(s).map(|c| c.into_raw()).unwrap_or(std::ptr::null_mut()),
+        Err(_) => std::ptr::null_mut(),
+    }
+}
+
+/// Chemin par défaut de la base gbrain, pour que l'app n'ait pas à le devine.
+#[no_mangle]
+pub extern "C" fn mtl_galaxy_default_path() -> *mut c_char {
+    let path = format!("{}/.gbrain/gbrain.sqlite", home());
+    CString::new(path).map(|c| c.into_raw()).unwrap_or(std::ptr::null_mut())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn galaxy_reads_real_brain_if_present() {
+        let path = format!("{}/.gbrain/gbrain.sqlite", home());
+        if !std::path::Path::new(&path).exists() {
+            return;
+        }
+        let g = build(&path);
+        assert!(g.available);
+        assert!(g.facts > 0);
+        assert!(g.nodes.len() > 20, "nœuds: {}", g.nodes.len());
+        assert!(g.edges.len() > 20, "arêtes: {}", g.edges.len());
+        // le centre doit être le premier nœud, et aucune arête ne doit pointer hors bornes
+        assert_eq!(g.nodes[0].kind, "core");
+        for e in &g.edges {
+            assert!(e.a < g.nodes.len() && e.b < g.nodes.len());
+        }
+        // les libellés de faits sont tronqués : jamais de texte brut long
+        assert!(g.nodes.iter().filter(|n| n.kind == "fact")
+            .all(|n| n.label.chars().count() <= 71));
+    }
+}
