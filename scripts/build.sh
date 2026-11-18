@@ -19,5 +19,8 @@ rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp .build/release/MissionTokenLive "$APP/Contents/MacOS/"
 cp packaging/Info.plist "$APP/Contents/Info.plist"
-codesign --force --sign - "$APP" 2>/dev/null || true
+cp packaging/AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"
+# Signature ad-hoc : suffisante pour un test local.
+codesign --force --deep --sign - "$APP" 2>/dev/null || true
+/usr/bin/touch "$APP"
 echo "OK : $APP"

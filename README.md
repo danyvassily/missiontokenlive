@@ -6,6 +6,8 @@ une étiquette de fiabilité sur chaque chiffre.
 
 SwiftUI · moteur Rust · SQLite · pont C · macOS 14+ · Apple Silicon.
 
+![Icône](packaging/icon_preview.png)
+
 ## Ce que l'application affiche
 
 | Écran | Contenu |
@@ -38,6 +40,18 @@ Chaque montant porte l'une de ces étiquettes :
 > montant inventé. Voir `docs/INTEGRATION_AUDIT.md`.
 
 ## Installation
+
+### DMG (test rapide)
+
+```bash
+./scripts/build.sh && ./scripts/make_dmg.sh
+open dist/MissionTokenLive-0.1.0.dmg
+```
+
+Glisser l'application dans `Applications`, puis ouvrir. Signature ad-hoc : au premier lancement,
+Gatekeeper demande une confirmation (clic droit → **Ouvrir**).
+
+### Depuis les sources
 
 ```bash
 git clone https://github.com/danyvassily/missiontokenlive.git

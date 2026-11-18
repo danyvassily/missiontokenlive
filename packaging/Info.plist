@@ -4,6 +4,7 @@
 <dict>
     <key>CFBundleName</key><string>MissionTokenLive</string>
     <key>CFBundleDisplayName</key><string>MissionTokenLive</string>
+    <key>CFBundleIconFile</key><string>AppIcon</string>
     <key>CFBundleIdentifier</key><string>online.agorax.missiontokenlive</string>
     <key>CFBundleExecutable</key><string>MissionTokenLive</string>
     <key>CFBundlePackageType</key><string>APPL</string>
