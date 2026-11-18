@@ -617,10 +617,10 @@ private struct SceneArborescence3D {
     var anneauBranches: [SIMD3<Double>] = []
     var anneauHarnais: [SIMD3<Double>] = []
 
-    private let rayonAnneauBranches: Double = 1.04
-    private let inclinaisonAnneauBranches: Double = 0.34
-    private let rayonAnneauHarnais: Double = 1.56
-    private let decalageXHarnais: Double = -0.18
+    private let rayonAnneauBranches: Double = 1.16
+    private let inclinaisonAnneauBranches: Double = 0.56
+    private let rayonAnneauHarnais: Double = 1.48
+    private let decalageXHarnais: Double = -0.10
 
     init(tree: WorkTree) {
         let nomRacine = textePropre(tree.rootLabel)
@@ -971,9 +971,9 @@ private struct SceneArborescence3D {
     }
 
     private func positionSurAnneauHarnais(angle: Double) -> SIMD3<Double> {
-        let x = decalageXHarnais + cos(angle) * (rayonAnneauHarnais * 0.55)
-        let y = sin(angle) * (rayonAnneauHarnais * 0.78)
-        let z = cos(angle + 0.65) * (rayonAnneauHarnais * 0.88)
+        let x = decalageXHarnais + cos(angle) * (rayonAnneauHarnais * 0.86)
+        let y = sin(angle) * (rayonAnneauHarnais * 0.56)
+        let z = cos(angle + 0.65) * (rayonAnneauHarnais * 0.72)
         return SIMD3<Double>(x, y, z)
     }
 
@@ -1119,13 +1119,13 @@ private struct SceneArborescence3D {
         for item in noeudsDuFondAuPremierPlan.reversed() {
             let noeud = noeuds[item.indice]
             if noeud.categorie == .racine || noeud.categorie == .branche {
-                let r = rayonPourNoeud(noeud, echelle: item.echelle)
+                let r = min(14.0, rayonPourNoeud(noeud, echelle: item.echelle))
                 zonesOccupees.append(
                     CGRect(
-                        x: item.ecran.x - r - 4,
-                        y: item.ecran.y - r - 4,
-                        width: (r + 4) * 2,
-                        height: (r + 4) * 2
+                        x: item.ecran.x - r,
+                        y: item.ecran.y - r,
+                        width: r * 2,
+                        height: r * 2
                     )
                 )
             }
@@ -1572,14 +1572,18 @@ private struct SceneArborescence3D {
         let largeurBloc = max(taillePrincipale.width, tailleSecondaire.width)
         let hauteurBloc = taillePrincipale.height + (afficherSousLibelle ? tailleSecondaire.height + 1 : 0)
 
-        let espacement: CGFloat = r + 7
+        let espacement: CGFloat = r + 6
         let candidats: [CGPoint] = [
             CGPoint(x: projete.ecran.x - largeurBloc * 0.5, y: projete.ecran.y + espacement),
             CGPoint(x: projete.ecran.x - largeurBloc * 0.5, y: projete.ecran.y - espacement - hauteurBloc),
             CGPoint(x: projete.ecran.x + espacement, y: projete.ecran.y - hauteurBloc * 0.5),
             CGPoint(x: projete.ecran.x - espacement - largeurBloc, y: projete.ecran.y - hauteurBloc * 0.5),
             CGPoint(x: projete.ecran.x + espacement * 0.85, y: projete.ecran.y + espacement * 0.85),
-            CGPoint(x: projete.ecran.x - espacement * 0.85 - largeurBloc, y: projete.ecran.y + espacement * 0.85)
+            CGPoint(x: projete.ecran.x - espacement * 0.85 - largeurBloc, y: projete.ecran.y + espacement * 0.85),
+            CGPoint(x: projete.ecran.x + espacement * 0.85, y: projete.ecran.y - espacement * 0.85 - hauteurBloc),
+            CGPoint(x: projete.ecran.x - espacement * 0.85 - largeurBloc, y: projete.ecran.y - espacement * 0.85 - hauteurBloc),
+            CGPoint(x: projete.ecran.x - largeurBloc * 0.5, y: projete.ecran.y + espacement + 18),
+            CGPoint(x: projete.ecran.x - largeurBloc * 0.5, y: projete.ecran.y - espacement - hauteurBloc - 18)
         ]
 
         let margeSecurite: CGFloat = 5

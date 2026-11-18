@@ -128,52 +128,47 @@ struct FilterChip: View {
 
 struct TaskTableHeader: View {
     @EnvironmentObject private var store: AppStore
-    private let widths: [CGFloat] = [0.24, 0.11, 0.11, 0.16, 0.10, 0.08, 0.11, 0.09]
 
     var body: some View {
         HStack(spacing: 8) {
-            sortableCell("Tâche · Statut", column: .status, widthRatio: widths[0])
-            cell("Projet", widthRatio: widths[1])
-            cell("Agent", widthRatio: widths[2])
-            cell("Provider · Modèle", widthRatio: widths[3])
-            sortableCell("Date", column: .date, widthRatio: widths[4], align: .trailing)
-            sortableCell("Durée", column: .duration, widthRatio: widths[5], align: .trailing)
-            sortableCell("Tokens", column: .tokens, widthRatio: widths[6], align: .trailing)
-            cell("Coût", widthRatio: widths[7], align: .trailing)
+            sortableCell("Tâche · Statut", column: .status)
+            cell("Projet")
+            cell("Agent")
+            cell("Provider · Modèle")
+            sortableCell("Date", column: .date, align: .trailing)
+            sortableCell("Durée", column: .duration, align: .trailing)
+            sortableCell("Tokens", column: .tokens, align: .trailing)
+            cell("Coût", align: .trailing)
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 9)
         .background(Theme.raised.opacity(0.5))
     }
 
-    private func cell(_ text: String, widthRatio: CGFloat, align: Alignment = .leading) -> some View {
+    private func cell(_ text: String, align: Alignment = .leading) -> some View {
         Text(text.uppercased())
             .font(Theme.micro()).tracking(0.6)
             .foregroundStyle(Theme.textTertiary)
             .frame(maxWidth: .infinity, alignment: align)
-            .layoutPriority(Double(widthRatio))
     }
 
-    private func sortableCell(_ text: String, column: TaskSortColumn, widthRatio: CGFloat, align: Alignment = .leading) -> some View {
+    private func sortableCell(_ text: String, column: TaskSortColumn, align: Alignment = .leading) -> some View {
         let isSorted = store.taskSortColumn == column
         return Button {
             store.toggleTaskSort(column)
         } label: {
             HStack(spacing: 4) {
-                if align == .trailing { Spacer(minLength: 0) }
                 Text(text.uppercased())
                     .font(Theme.micro()).tracking(0.6)
                     .foregroundStyle(isSorted ? Theme.textPrimary : Theme.textTertiary)
                 Image(systemName: isSorted ? (store.taskSortAscending ? "chevron.up" : "chevron.down") : "arrow.up.arrow.down")
                     .font(.system(size: 8.5, weight: .semibold))
                     .foregroundStyle(isSorted ? Theme.accent : Theme.textTertiary.opacity(0.6))
-                if align == .leading { Spacer(minLength: 0) }
             }
             .frame(maxWidth: .infinity, alignment: align)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .layoutPriority(Double(widthRatio))
     }
 }
 
