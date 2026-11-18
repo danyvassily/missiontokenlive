@@ -67,6 +67,9 @@ final class AppStore: ObservableObject {
         }
         // Corbeille : purge uniquement les données internes arrivées à échéance (30 jours).
         _ = EngineBridge.sweepTrash()
+        if ProcessInfo.processInfo.environment["MTL_IMPORT_KEYS"] == "1" {
+            Self.importAllKeys()
+        }
         settings = EngineBridge.settings()
         refresh()
         timer = Timer.publish(every: 2, on: .main, in: .common)
@@ -76,6 +79,15 @@ final class AppStore: ObservableObject {
 
     /// Mode démonstration : fixtures locales. Sinon, données réelles d'Hermès.
     var isDemo: Bool { ProcessInfo.processInfo.environment["MTL_DEMO"] == "1" }
+
+    /// Import en lot, utilisé par `MTL_IMPORT_KEYS=1` et par le bouton « Tout importer ».
+    /// Les valeurs sont lues puis écrites dans le Trousseau ; elles ne sont jamais affichées.
+    static func importAllKeys() {
+        for key in EngineBridge.keyInventory() where key.present {
+            guard let value = EngineBridge.keyValue(key.envVar) else { continue }
+            Keychain.store(value, account: key.envVar)
+        }
+    }
 
     func refresh() {
         let snap = isDemo ? (EngineBridge.snapshot() ?? .empty) : Self.liveSnapshot()

@@ -43,6 +43,13 @@ char *mtl_settings_json(const char *db_path);
 /* Enregistre les réglages (budget vide = aucun budget). 0 = succès. */
 int32_t mtl_save_settings(const char *db_path, const char *budget, int32_t warn_pct, int32_t critical_pct, int32_t hide_dock);
 
+/* Inventaire des clés connues de ~/.hermes/.env, masquées (JSON). NULL si indisponible. */
+char *mtl_keys_json(void);
+
+/* Valeur en clair d'une variable de la liste blanche, pour le Trousseau uniquement.
+ * NULL si la variable est inconnue ou vide. Le pointeur doit être libéré par mtl_free. */
+char *mtl_key_value(const char *env_var);
+
 #ifdef __cplusplus
 }
 #endif

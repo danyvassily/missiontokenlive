@@ -2,6 +2,9 @@ import SwiftUI
 
 struct ProvidersView: View {
     @EnvironmentObject private var store: AppStore
+    @State private var keys: [ProviderKey] = []
+    @State private var stored: Set<String> = []
+    @State private var message: String = ""
 
     var body: some View {
         VStack(spacing: 0) {
@@ -16,6 +19,7 @@ struct ProvidersView: View {
                             ProviderCard(provider: provider)
                         }
                     }
+                    keycard
                     Card(padding: 16) {
                         VStack(alignment: .leading, spacing: 10) {
                             HStack {
@@ -41,6 +45,73 @@ struct ProvidersView: View {
                 }
                 .padding(.horizontal, 24)
                 .padding(.bottom, 24)
+            }
+        }
+        .onAppear(perform: load)
+    }
+
+    private func load() {
+        keys = EngineBridge.keyInventory()
+        stored = Set(keys.map(\.envVar).filter { Keychain.has(account: $0) })
+    }
+
+    private func importKey(_ key: ProviderKey) {
+        guard let value = EngineBridge.keyValue(key.envVar) else {
+            message = "Lecture impossible pour \(key.provider)."
+            return
+        }
+        if Keychain.store(value, account: key.envVar) {
+            stored.insert(key.envVar)
+            message = "\(key.provider) : clé placée dans le Trousseau."
+        } else {
+            message = "\(key.provider) : le Trousseau a refusé l'écriture."
+        }
+    }
+
+    private var keycard: some View {
+        Card(padding: 16) {
+            VStack(alignment: .leading, spacing: 12) {
+                HStack(spacing: 8) {
+                    Image(systemName: "key.horizontal").font(.system(size: 11)).foregroundStyle(Theme.accent)
+                    Text("Clés présentes sur ce Mac").font(Theme.section(14)).foregroundStyle(Theme.textPrimary)
+                    Spacer()
+                    Text("Trousseau macOS — jamais affichées")
+                        .font(Theme.micro()).foregroundStyle(Theme.textTertiary)
+                }
+                Text("Lecture de ~/.hermes/.env. Aucune valeur n'est affichée, journalisée ni écrite dans la base : "
+                     + "l'import copie la clé directement dans le Trousseau du système.")
+                    .font(Theme.caption(10.5)).foregroundStyle(Theme.textTertiary)
+                    .fixedSize(horizontal: false, vertical: true)
+                ForEach(keys) { key in
+                    HStack(spacing: 10) {
+                        Circle()
+                            .fill(stored.contains(key.envVar) ? Theme.ok : (key.present ? Theme.accent : Theme.textTertiary))
+                            .frame(width: 6, height: 6)
+                        Text(key.provider).font(Theme.body(12)).foregroundStyle(Theme.textPrimary).frame(width: 120, alignment: .leading)
+                        Text(key.kind).font(Theme.micro()).foregroundStyle(Theme.textTertiary).frame(width: 54, alignment: .leading)
+                        Text(key.present ? key.masked : "absente")
+                            .font(Theme.micro()).monospaced()
+                            .foregroundStyle(key.present ? Theme.textSecondary : Theme.textTertiary)
+                        Spacer()
+                        if stored.contains(key.envVar) {
+                            Label("dans le Trousseau", systemImage: "checkmark.seal.fill")
+                                .font(Theme.micro()).foregroundStyle(Theme.ok)
+                        } else if key.present {
+                            Button("Importer") { importKey(key) }
+                                .buttonStyle(.plain)
+                                .font(Theme.caption(10.5)).foregroundStyle(Theme.textPrimary)
+                                .padding(.horizontal, 9).padding(.vertical, 3)
+                                .background(Theme.field).clipShape(Capsule())
+                        } else {
+                            Text("—").font(Theme.micro()).foregroundStyle(Theme.textTertiary)
+                        }
+                    }
+                    .padding(.vertical, 4)
+                    Rectangle().fill(Theme.borderSoft).frame(height: 1)
+                }
+                if !message.isEmpty {
+                    Text(message).font(Theme.caption(10.5)).foregroundStyle(Theme.textSecondary)
+                }
             }
         }
     }

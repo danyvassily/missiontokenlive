@@ -56,6 +56,21 @@ enum EngineBridge {
         static let fallback = Settings(budget: nil, warn: 80, critical: 95, hideDock: false)
     }
 
+    static func keyInventory() -> [ProviderKey] {
+        guard let raw = mtl_keys_json() else { return [] }
+        defer { mtl_free_string(raw) }
+        let data = Data(bytes: raw, count: strlen(raw))
+        return (try? JSONDecoder().decode([ProviderKey].self, from: data)) ?? []
+    }
+
+    /// Valeur en clair : seul `ProvidersView.importKey` l'appelle, puis la copie
+    /// dans le Trousseau. Aucun affichage, aucun log.
+    static func keyValue(_ envVar: String) -> String? {
+        guard let ptr = mtl_key_value(envVar) else { return nil }
+        defer { mtl_free_string(ptr) }
+        return String(cString: ptr)
+    }
+
     static func brainStats() -> BrainStats {
         guard let c = mtl_brain_json() else { return .unavailable }
         defer { mtl_free_string(c) }

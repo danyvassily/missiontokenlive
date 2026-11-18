@@ -10,6 +10,7 @@
 //! `mtl_free_string`. Aucune exception ne traverse la frontière FFI.
 
 pub mod brain;
+pub mod keys;
 
 use std::ffi::{c_char, CStr, CString};
 
