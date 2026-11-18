@@ -28,6 +28,14 @@ pub struct GEdge {
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
+pub struct GContact {
+    pub name: String,
+    pub messages: i64,
+    pub relation: String,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct Galaxy {
     pub available: bool,
     pub facts: i64,
@@ -35,6 +43,7 @@ pub struct Galaxy {
     pub entities: i64,
     pub nodes: Vec<GNode>,
     pub edges: Vec<GEdge>,
+    pub contacts: Vec<GContact>,
 }
 
 fn home() -> String {
@@ -55,6 +64,23 @@ fn basename(path: &str) -> String {
     path.rsplit('/').next().unwrap_or(path).to_string()
 }
 
+/// Compteurs de messages par contact, lus dans la base WhatsApp locale (si présente).
+fn whatsapp_counts() -> Vec<(String, i64)> {
+    let path = format!("{}/.gbrain/wa.sqlite", home());
+    let Ok(conn) = Connection::open_with_flags(&path, OpenFlags::SQLITE_OPEN_READ_ONLY) else {
+        return vec![];
+    };
+    let mut out = vec![];
+    if let Ok(mut stmt) = conn.prepare(
+        "SELECT contact, COUNT(*) FROM messages GROUP BY contact ORDER BY COUNT(*) DESC",
+    ) {
+        if let Ok(rows) = stmt.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?))) {
+            out = rows.flatten().collect();
+        }
+    }
+    out
+}
+
 pub fn build(db_path: &str) -> Galaxy {
     let mut galaxy = Galaxy {
         available: false,
@@ -63,6 +89,7 @@ pub fn build(db_path: &str) -> Galaxy {
         entities: 0,
         nodes: vec![],
         edges: vec![],
+        contacts: vec![],
     };
     let Ok(conn) = Connection::open_with_flags(db_path, OpenFlags::SQLITE_OPEN_READ_ONLY) else {
         return galaxy;
@@ -108,6 +135,11 @@ pub fn build(db_path: &str) -> Galaxy {
         }
     }
 
+    // Contacts WhatsApp : ce sont des entités, mais on veut les compter en messages
+    // et non en faits — et surtout ne pas déverser 3 380 points dans le nuage.
+    let wa_counts = whatsapp_counts();
+    let mut contacts: Vec<String> = vec![];
+
     // Couche 2 : entités les plus citées.
     let mut entity_index: Vec<(String, usize)> = vec![];
     if let Ok(mut stmt) = conn.prepare(
@@ -118,12 +150,19 @@ pub fn build(db_path: &str) -> Galaxy {
             Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?))
         }) {
             for (entity, c) in rows.flatten() {
+                let messages = wa_counts.iter()
+                    .find(|(name, _)| name.eq_ignore_ascii_case(&entity))
+                    .map(|(_, n)| *n);
+                let is_contact = messages.is_some();
+                if is_contact {
+                    contacts.push(entity.clone());
+                }
                 let idx = galaxy.nodes.len();
                 galaxy.nodes.push(GNode {
                     id: format!("ent-{entity}"),
-                    label: short(&entity, 24),
-                    kind: "entity".into(),
-                    weight: c,
+                    label: short(&entity, 26),
+                    kind: if is_contact { "contact".into() } else { "entity".into() },
+                    weight: messages.unwrap_or(c),
                 });
                 galaxy.edges.push(GEdge { a: 0, b: idx });
                 entity_index.push((entity, idx));
@@ -144,6 +183,11 @@ pub fn build(db_path: &str) -> Galaxy {
             ))
         }) {
             for (text, entity, src_kind) in rows.flatten() {
+                if let Some(name) = &entity {
+                    if contacts.iter().any(|c| c.eq_ignore_ascii_case(name)) {
+                        continue;   // agrégé dans le contact : pas de point par fait
+                    }
+                }
                 let idx = galaxy.nodes.len();
                 galaxy.nodes.push(GNode {
                     id: format!("fact-{idx}"),
@@ -162,6 +206,31 @@ pub fn build(db_path: &str) -> Galaxy {
             }
         }
     }
+
+    // Fiches contacts : ce que le modèle a retenu, sans les conversations.
+    if let Ok(mut stmt) = conn.prepare(
+        "SELECT text, entity FROM facts WHERE text LIKE 'Contact WhatsApp %' ORDER BY id DESC",
+    ) {
+        if let Ok(rows) = stmt.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, Option<String>>(1)?))) {
+            for (text, entity) in rows.flatten() {
+                let name = entity.unwrap_or_else(|| "contact".into());
+                let relation = text
+                    .split_once(" : ")
+                    .map(|(_, rest)| rest.to_string())
+                    .unwrap_or_default();
+                let messages = wa_counts.iter()
+                    .find(|(c, _)| c.eq_ignore_ascii_case(&name))
+                    .map(|(_, n)| *n)
+                    .unwrap_or(0);
+                galaxy.contacts.push(GContact {
+                    name,
+                    messages,
+                    relation: short(&relation, 90),
+                });
+            }
+        }
+    }
+    galaxy.contacts.sort_by(|a, b| b.messages.cmp(&a.messages));
 
     galaxy
 }
