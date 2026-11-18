@@ -42,11 +42,10 @@ enum Screen: String, CaseIterable, Identifiable {
 ///
 /// Tout vient du moteur Rust (`EngineBridge.snapshot()`). L'interface ne calcule ni
 /// coût ni token : elle affiche et met en forme.
-@MainActor
 enum TaskPeriod: String, CaseIterable, Identifiable {
     case today, week, month, all
     var id: String { rawValue }
-    nonisolated var label: String {
+    var label: String {
         switch self {
         case .today: return "Aujourd'hui"
         case .week: return "7 jours"
@@ -54,7 +53,7 @@ enum TaskPeriod: String, CaseIterable, Identifiable {
         case .all: return "Tout"
         }
     }
-    nonisolated var days: Int? {
+    var days: Int? {
         switch self {
         case .today: return 1
         case .week: return 7
@@ -64,6 +63,20 @@ enum TaskPeriod: String, CaseIterable, Identifiable {
     }
 }
 
+enum TaskSortColumn: String, CaseIterable, Identifiable {
+    case date, duration, tokens, status
+    var id: String { rawValue }
+    var label: String {
+        switch self {
+        case .date: return "Date"
+        case .duration: return "Durée"
+        case .tokens: return "Tokens"
+        case .status: return "Statut"
+        }
+    }
+}
+
+@MainActor
 final class AppStore: ObservableObject {
     @Published private(set) var snapshot: Snapshot = .empty
     @Published var selection: Screen = .now
@@ -72,6 +85,8 @@ final class AppStore: ObservableObject {
     @Published var searchText: String = ""
     @Published var periodFilter: TaskPeriod = .today
     @Published var statusFilter: TaskStatus?
+    @Published var taskSortColumn: TaskSortColumn = .date
+    @Published var taskSortAscending: Bool = false
     @Published var showingDemoData: Bool = false
     @Published var settings: EngineBridge.Settings = .fallback
     @Published var worktree: WorkTree = .empty
@@ -275,14 +290,11 @@ final class AppStore: ObservableObject {
             .first
     }
 
-    var filteredTasks: [TaskItem] {
+    var tasksForCurrentPeriodAndSearch: [TaskItem] {
         var items = snapshot.tasks
         if let days = periodFilter.days {
             let limit = Calendar.current.date(byAdding: .day, value: -days, to: Date()) ?? .distantPast
             items = items.filter { $0.started_at >= limit }
-        }
-        if let statusFilter {
-            items = items.filter { $0.status == statusFilter }
         }
         let q = searchText.trimmingCharacters(in: .whitespaces).lowercased()
         if !q.isEmpty {
@@ -294,6 +306,62 @@ final class AppStore: ObservableObject {
             }
         }
         return items
+    }
+
+    func taskCount(for status: TaskStatus?) -> Int {
+        let base = tasksForCurrentPeriodAndSearch
+        guard let status else { return base.count }
+        return base.filter { $0.status == status }.count
+    }
+
+    func toggleTaskSort(_ column: TaskSortColumn) {
+        if taskSortColumn == column {
+            taskSortAscending.toggle()
+        } else {
+            taskSortColumn = column
+            taskSortAscending = false
+        }
+    }
+
+    var filteredTasks: [TaskItem] {
+        var items = tasksForCurrentPeriodAndSearch
+        if let statusFilter {
+            items = items.filter { $0.status == statusFilter }
+        }
+        let now = Date()
+        return items.sorted { a, b in
+            let asc = taskSortAscending
+            switch taskSortColumn {
+            case .date:
+                return asc ? (a.started_at < b.started_at) : (a.started_at > b.started_at)
+            case .duration:
+                let da = (a.ended_at ?? now).timeIntervalSince(a.started_at)
+                let db = (b.ended_at ?? now).timeIntervalSince(b.started_at)
+                return asc ? (da < db) : (da > db)
+            case .tokens:
+                if a.tokens.total == b.tokens.total {
+                    return a.started_at > b.started_at
+                }
+                return asc ? (a.tokens.total < b.tokens.total) : (a.tokens.total > b.tokens.total)
+            case .status:
+                let ra = Self.statusSortRank(a.status)
+                let rb = Self.statusSortRank(b.status)
+                if ra == rb {
+                    return a.started_at > b.started_at
+                }
+                return asc ? (ra > rb) : (ra < rb)
+            }
+        }
+    }
+
+    private static func statusSortRank(_ status: TaskStatus) -> Int {
+        switch status {
+        case .running: return 0
+        case .waiting: return 1
+        case .failed: return 2
+        case .completed: return 3
+        case .cancelled: return 4
+        }
     }
 
     /// Budget restant, uniquement s'il existe un budget ET un coût connu.

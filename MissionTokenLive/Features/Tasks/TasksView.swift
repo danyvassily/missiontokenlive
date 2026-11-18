@@ -8,7 +8,7 @@ struct TasksView: View {
         VStack(spacing: 0) {
             ScreenHeader(
                 title: "Tâches",
-                subtitle: "\(store.filteredTasks.count) tâches · période : \(store.periodFilter.label.lowercased())"
+                subtitle: "\(store.filteredTasks.count) tâches · période : \(store.periodFilter.label.lowercased()) · tri : \(store.taskSortColumn.label.lowercased())"
             )
             HStack(spacing: 8) {
                 ForEach(TaskPeriod.allCases) { period in
@@ -17,10 +17,26 @@ struct TasksView: View {
                     }
                 }
                 Rectangle().fill(Theme.border).frame(width: 1, height: 16)
-                FilterChip(label: "Toutes", active: store.statusFilter == nil) { store.statusFilter = nil }
-                FilterChip(label: "En cours", active: store.statusFilter == .running) { store.statusFilter = .running }
-                FilterChip(label: "Terminées", active: store.statusFilter == .completed) { store.statusFilter = .completed }
-                FilterChip(label: "Erreurs", active: store.statusFilter == .failed) { store.statusFilter = .failed }
+                FilterChip(
+                    label: "Toutes",
+                    count: store.taskCount(for: nil),
+                    active: store.statusFilter == nil
+                ) { store.statusFilter = nil }
+                FilterChip(
+                    label: "En cours",
+                    count: store.taskCount(for: .running),
+                    active: store.statusFilter == .running
+                ) { store.statusFilter = .running }
+                FilterChip(
+                    label: "Terminées",
+                    count: store.taskCount(for: .completed),
+                    active: store.statusFilter == .completed
+                ) { store.statusFilter = .completed }
+                FilterChip(
+                    label: "Erreurs",
+                    count: store.taskCount(for: .failed),
+                    active: store.statusFilter == .failed
+                ) { store.statusFilter = .failed }
                 Spacer()
                 HStack(spacing: 6) {
                     Image(systemName: "magnifyingglass").font(.system(size: 11)).foregroundStyle(Theme.textTertiary)
@@ -80,35 +96,50 @@ struct TasksView: View {
 
 struct FilterChip: View {
     let label: String
+    var count: Int? = nil
     let active: Bool
     let action: () -> Void
 
     var body: some View {
         Button(action: action) {
-            Text(label)
-                .font(Theme.caption(11.5))
-                .foregroundStyle(active ? Theme.textPrimary : Theme.textSecondary)
-                .padding(.horizontal, 10).padding(.vertical, 5)
-                .background(active ? Theme.raised : Theme.surface)
-                .clipShape(Capsule())
-                .overlay(Capsule().stroke(active ? Theme.border : Theme.borderSoft))
+            HStack(spacing: 5) {
+                Text(label)
+                    .font(Theme.caption(11.5))
+                    .foregroundStyle(active ? Theme.textPrimary : Theme.textSecondary)
+                if let count {
+                    Text("\(count)")
+                        .font(Theme.micro())
+                        .monospacedDigit()
+                        .foregroundStyle(active ? Theme.accent : Theme.textTertiary)
+                        .padding(.horizontal, 5)
+                        .padding(.vertical, 1)
+                        .background(active ? Theme.accent.opacity(0.16) : Theme.field.opacity(0.6))
+                        .clipShape(Capsule())
+                }
+            }
+            .padding(.horizontal, 10).padding(.vertical, 5)
+            .background(active ? Theme.raised : Theme.surface)
+            .clipShape(Capsule())
+            .overlay(Capsule().stroke(active ? Theme.border : Theme.borderSoft))
         }
         .buttonStyle(.plain)
     }
 }
 
 struct TaskTableHeader: View {
-    private let widths: [CGFloat] = [0.30, 0.12, 0.12, 0.18, 0.08, 0.11, 0.09]
+    @EnvironmentObject private var store: AppStore
+    private let widths: [CGFloat] = [0.24, 0.11, 0.11, 0.16, 0.10, 0.08, 0.11, 0.09]
 
     var body: some View {
         HStack(spacing: 8) {
-            cell("Tâche", widthRatio: widths[0])
+            sortableCell("Tâche · Statut", column: .status, widthRatio: widths[0])
             cell("Projet", widthRatio: widths[1])
             cell("Agent", widthRatio: widths[2])
             cell("Provider · Modèle", widthRatio: widths[3])
-            cell("Durée", widthRatio: widths[4], align: .trailing)
-            cell("Tokens entrée/sortie", widthRatio: widths[5], align: .trailing)
-            cell("Coût", widthRatio: widths[6], align: .trailing)
+            sortableCell("Date", column: .date, widthRatio: widths[4], align: .trailing)
+            sortableCell("Durée", column: .duration, widthRatio: widths[5], align: .trailing)
+            sortableCell("Tokens", column: .tokens, widthRatio: widths[6], align: .trailing)
+            cell("Coût", widthRatio: widths[7], align: .trailing)
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 9)
@@ -122,11 +153,40 @@ struct TaskTableHeader: View {
             .frame(maxWidth: .infinity, alignment: align)
             .layoutPriority(Double(widthRatio))
     }
+
+    private func sortableCell(_ text: String, column: TaskSortColumn, widthRatio: CGFloat, align: Alignment = .leading) -> some View {
+        let isSorted = store.taskSortColumn == column
+        return Button {
+            store.toggleTaskSort(column)
+        } label: {
+            HStack(spacing: 4) {
+                if align == .trailing { Spacer(minLength: 0) }
+                Text(text.uppercased())
+                    .font(Theme.micro()).tracking(0.6)
+                    .foregroundStyle(isSorted ? Theme.textPrimary : Theme.textTertiary)
+                Image(systemName: isSorted ? (store.taskSortAscending ? "chevron.up" : "chevron.down") : "arrow.up.arrow.down")
+                    .font(.system(size: 8.5, weight: .semibold))
+                    .foregroundStyle(isSorted ? Theme.accent : Theme.textTertiary.opacity(0.6))
+                if align == .leading { Spacer(minLength: 0) }
+            }
+            .frame(maxWidth: .infinity, alignment: align)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .layoutPriority(Double(widthRatio))
+    }
 }
 
 struct TaskRow: View {
     let task: TaskItem
     let isSelected: Bool
+
+    private static let shortDateFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.locale = Locale(identifier: "fr_FR")
+        f.dateFormat = "dd/MM HH:mm"
+        return f
+    }()
 
     var body: some View {
         HStack(spacing: 8) {
@@ -148,6 +208,9 @@ struct TaskRow: View {
                 Text(task.model ?? "—").font(Theme.caption(9.5)).foregroundStyle(Theme.textTertiary).lineLimit(1)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
+            Text(Self.shortDateFormatter.string(from: task.started_at))
+                .font(Theme.caption(11)).monospacedDigit().foregroundStyle(Theme.textTertiary)
+                .frame(maxWidth: .infinity, alignment: .trailing)
             Text(task.ended_at.map { durationText($0.timeIntervalSince(task.started_at)) } ?? "en cours")
                 .font(Theme.caption(11)).monospacedDigit().foregroundStyle(Theme.textSecondary)
                 .frame(maxWidth: .infinity, alignment: .trailing)
