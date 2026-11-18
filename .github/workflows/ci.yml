@@ -1,0 +1,58 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  rust:
+    name: Moteur Rust
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+      - run: cargo fmt --all -- --check
+      - run: cargo clippy --all-targets -- -D warnings
+      - run: cargo test --all
+
+  swift:
+    name: Application SwiftUI
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Construire le moteur et la bibliothèque statique
+        run: |
+          cargo build --release -p mission-token-ffi
+          mkdir -p Sources/CMissionTokenFFI/lib
+          cp target/release/libmission_token_ffi.a Sources/CMissionTokenFFI/lib/
+      - name: Compiler l'application
+        run: swift build -c release --product MissionTokenLive
+      - name: Tests Swift
+        run: swift test
+
+  secrets:
+    name: Aucun secret dans le dépôt
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Refuser les motifs de clés
+        run: |
+          set -e
+          if grep -rInE "(sk-[A-Za-z0-9]{20,}|ghp_[A-Za-z0-9]{20,}|AKIA[0-9A-Z]{16})" \
+             --include="*.swift" --include="*.rs" --include="*.md" --include="*.yml" . ; then
+            echo "::error::Clé potentielle détectée dans le dépôt"
+            exit 1
+          fi
+          echo "OK : aucun motif de clé détecté"
