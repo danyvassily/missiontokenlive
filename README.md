@@ -135,6 +135,19 @@ traverse la frontière : les panics sont rattrapés et renvoient `NULL`.
 3. Exposer la carte dans `ProvidersView` (données déjà fournies par le snapshot).
 4. Ajouter un test qui vérifie que l'absence de solde produit bien `Reliability::Unavailable`.
 
+## Clés des providers
+
+L'écran **Providers** contient la carte « Clés présentes sur ce Mac » : elle lit `~/.hermes/.env`,
+affiche un nom, une famille et une valeur **masquée**, et permet d'importer la clé dans le
+**Trousseau macOS** (service `online.agorax.missiontokenlive.keys`).
+
+- Aucune clé n'est affichée en clair, journalisée, exportée ou écrite dans la base SQLite.
+- Seules les variables d'une liste blanche peuvent être lues ; un nom inconnu est refusé (`mtl_key_value`).
+- Les jetons d'infrastructure (`TELEGRAM_BOT_TOKEN`, `HERMES_DASHBOARD_*`, `API_SERVER_KEY`) sont
+  volontairement exclus : ce ne sont pas des providers.
+- Import en lot possible via `MTL_KEY_PAYLOAD=<fichier json>` : le fichier est supprimé après lecture
+  et l'app écrit un rapport d'empreintes SHA-256 (jamais les valeurs).
+
 ## Cerveau partagé (gbrain)
 
 L'écran **Cerveau** lit `~/.gbrain/gbrain.sqlite` en lecture seule et montre ce que les agents

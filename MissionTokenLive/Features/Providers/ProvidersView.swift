@@ -89,7 +89,7 @@ struct ProvidersView: View {
                             .frame(width: 6, height: 6)
                         Text(key.provider).font(Theme.body(12)).foregroundStyle(Theme.textPrimary).frame(width: 120, alignment: .leading)
                         Text(key.kind).font(Theme.micro()).foregroundStyle(Theme.textTertiary).frame(width: 54, alignment: .leading)
-                        Text(key.present ? key.masked : "absente")
+                        Text(stored.contains(key.envVar) ? "•••• (Trousseau)" : (key.present ? key.masked : "absente"))
                             .font(Theme.micro()).monospaced()
                             .foregroundStyle(key.present ? Theme.textSecondary : Theme.textTertiary)
                         Spacer()

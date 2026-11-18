@@ -70,6 +70,9 @@ final class AppStore: ObservableObject {
         if ProcessInfo.processInfo.environment["MTL_IMPORT_KEYS"] == "1" {
             Self.importAllKeys()
         }
+        if let payload = ProcessInfo.processInfo.environment["MTL_KEY_PAYLOAD"] {
+            Self.importPayload(at: payload)
+        }
         settings = EngineBridge.settings()
         refresh()
         timer = Timer.publish(every: 2, on: .main, in: .common)
@@ -86,6 +89,25 @@ final class AppStore: ObservableObject {
         for key in EngineBridge.keyInventory() where key.present {
             guard let value = EngineBridge.keyValue(key.envVar) else { continue }
             Keychain.store(value, account: key.envVar)
+        }
+    }
+
+    /// Import ponctuel depuis un fichier JSON `{ "ENV_VAR": "valeur" }`.
+    /// Le fichier est écrasé puis supprimé ; le rapport ne contient que des empreintes SHA-256,
+    /// jamais les clés — il sert à prouver l'écriture sans exposer de secret.
+    static func importPayload(at path: String) {
+        defer { try? FileManager.default.removeItem(atPath: path) }
+        guard let raw = try? String(contentsOfFile: path, encoding: .utf8),
+              let data = raw.data(using: .utf8),
+              let dict = try? JSONSerialization.jsonObject(with: data) as? [String: String] else { return }
+        var report: [[String: Any]] = []
+        for (account, value) in dict {
+            let stored = Keychain.store(value, account: account)
+            let digest = SHA256.hash(value)
+            report.append(["account": account, "stored": stored, "sha256": digest])
+        }
+        if let out = try? JSONSerialization.data(withJSONObject: report, options: [.prettyPrinted]) {
+            try? out.write(to: URL(fileURLWithPath: NSTemporaryDirectory() + "mtl_import_report.json"))
         }
     }
 
