@@ -185,3 +185,22 @@ au premier lancement.
 ## Licence
 
 MIT.
+
+## Démarrage automatique
+
+L'app se lance dès que le gateway Hermes est en écoute, via un agent launchd :
+
+- script : `~/.hermes/scripts/missiontoken_autostart.sh` (copie dans `packaging/`)
+- agent : `~/Library/LaunchAgents/com.dany.missiontokenlive.autostart.plist`
+
+Le script attend le fichier `~/.hermes/gateway.pid` (ou le port 8642) puis lance
+`open -g /Applications/MissionTokenLive.app` — sans voler le focus. `open -g` étant
+idempotent, aucun test « déjà lancée » n'est nécessaire.
+
+Désactiver :
+
+    launchctl bootout gui/$(id -u)/com.dany.missiontokenlive.autostart
+
+Réactiver :
+
+    launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.dany.missiontokenlive.autostart.plist
