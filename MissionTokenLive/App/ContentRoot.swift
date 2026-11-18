@@ -15,6 +15,11 @@ struct ContentRoot: View {
         }
         .background(Theme.bg)
         .preferredColorScheme(.dark)
+        .onAppear {
+            if store.settings.hideDock {
+                NSApp?.setActivationPolicy(.accessory)
+            }
+        }
     }
 
     @ViewBuilder

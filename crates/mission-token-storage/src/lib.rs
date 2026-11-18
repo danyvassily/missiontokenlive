@@ -599,8 +599,11 @@ impl Db {
         critical_pct: u8,
         hide_dock_icon: bool,
     ) -> Result<()> {
-        if let Some(b) = monthly_budget {
-            self.set_setting("budget.monthly", &format!("{b:.2}"))?;
+        match monthly_budget {
+            Some(b) => self.set_setting("budget.monthly", &format!("{b:.2}"))?,
+            None => {
+                self.conn.execute("DELETE FROM settings WHERE key='budget.monthly'", [])?;
+            }
         }
         self.set_setting("budget.alert.pct", &warn_pct.to_string())?;
         self.set_setting("budget.critical.pct", &critical_pct.to_string())?;

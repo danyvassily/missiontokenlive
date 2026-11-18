@@ -76,19 +76,26 @@ struct SettingsView: View {
             }
         }
         .onAppear(perform: load)
-        .onChange(of: monthlyBudget) { _ in persist() }
-        .onChange(of: warnPct) { _ in persist() }
-        .onChange(of: criticalPct) { _ in persist() }
-        .onChange(of: hideDock) { _ in persist() }
+        .onChange(of: monthlyBudget) { _, _ in persist() }
+        .onChange(of: warnPct) { _, _ in persist() }
+        .onChange(of: criticalPct) { _, _ in persist() }
+        .onChange(of: hideDock) { _, _ in persist() }
     }
 
     private func load() {
         let s = EngineBridge.settings()
-        monthlyBudget = s.budget.map { String(format: "%.0f", $0) } ?? ""
+        monthlyBudget = s.budget.map { Self.formatBudgetFR($0) } ?? ""
         warnPct = Double(s.warn)
         criticalPct = Double(s.critical)
         hideDock = s.hideDock
         loaded = true
+    }
+
+    static func formatBudgetFR(_ value: Double) -> String {
+        if abs(value.rounded() - value) < 1e-6 {
+            return String(format: "%.0f", value)
+        }
+        return String(format: "%.2f", value).replacingOccurrences(of: ".", with: ",")
     }
 
     /// Écriture immédiate : pas de bouton « Enregistrer », on ne perd rien en fermant.
@@ -97,7 +104,7 @@ struct SettingsView: View {
         EngineBridge.saveSettings(budget: monthlyBudget, warn: warnPct, critical: criticalPct, hideDock: hideDock)
         store.settings = EngineBridge.settings()
         // Barre de menus discrète : masquer l'icône du Dock quand l'utilisateur le demande.
-        NSApp.setActivationPolicy(hideDock ? .accessory : .regular)
+        NSApp?.setActivationPolicy(hideDock ? .accessory : .regular)
     }
 
     private func labeledField(_ label: String, text: Binding<String>) -> some View {
