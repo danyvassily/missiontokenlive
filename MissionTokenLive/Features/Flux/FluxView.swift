@@ -10,13 +10,7 @@ struct FluxView: View {
     @EnvironmentObject private var store: AppStore
 
     var body: some View {
-        Group {
-            if store.worktree.available {
-                WorkTree3DView(tree: store.worktree)
-            } else {
-                fallback
-            }
-        }
+        WorkTree3DView(tree: store.worktree)
     }
 
     /// Ancienne carte 2D, conservée pour le cas où la base d'Hermès est illisible.

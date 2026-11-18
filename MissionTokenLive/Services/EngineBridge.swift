@@ -57,8 +57,9 @@ enum EngineBridge {
     }
 
     static func workTree() -> WorkTree {
-        let path = databaseURL().path
-        guard let raw = path.withCString({ mtl_worktree_json($0) }) else { return .empty }
+        let hermes = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent(".hermes/state.db").path
+        guard let raw = hermes.withCString({ mtl_worktree_json($0) }) else { return .empty }
         defer { mtl_free_string(raw) }
         let json = String(cString: raw)
         return (try? JSONDecoder().decode(WorkTree.self, from: Data(json.utf8))) ?? .empty

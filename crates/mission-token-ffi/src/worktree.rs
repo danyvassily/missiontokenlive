@@ -59,8 +59,31 @@ fn home() -> String {
     std::env::var("HOME").unwrap_or_else(|_| "/Users/danyvassily".into())
 }
 
+fn default_hermes_db() -> String {
+    format!("{}/.hermes/state.db", home())
+}
+
+fn resolve_hermes_db(db_path: &str) -> String {
+    if let Ok(conn) = Connection::open_with_flags(db_path, OpenFlags::SQLITE_OPEN_READ_ONLY) {
+        let has_sessions = conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='sessions'",
+                [],
+                |r| r.get::<_, i64>(0),
+            )
+            .unwrap_or(0);
+        if has_sessions > 0 {
+            return db_path.to_string();
+        }
+    }
+    default_hermes_db()
+}
+
 fn short_title(title: &str) -> String {
     let t = title.trim();
+    if t.is_empty() {
+        return "Session Hermès".into();
+    }
     let cleaned = if t.starts_with("@file:") { "Session technique" } else { t };
     let mut out: String = cleaned.chars().take(70).collect();
     if cleaned.chars().count() > 70 {
@@ -119,7 +142,8 @@ pub fn build(db_path: &str) -> WorkTree {
         branches: vec![],
         harnesses: harnesses(),
     };
-    let Ok(conn) = Connection::open_with_flags(db_path, OpenFlags::SQLITE_OPEN_READ_ONLY) else {
+    let resolved = resolve_hermes_db(db_path);
+    let Ok(conn) = Connection::open_with_flags(&resolved, OpenFlags::SQLITE_OPEN_READ_ONLY) else {
         return tree;
     };
     tree.available = true;
@@ -133,14 +157,33 @@ pub fn build(db_path: &str) -> WorkTree {
          LIMIT 7",
     ) {
         Ok(s) => s,
-        Err(_) => return tree,
+        Err(_) => {
+            tree.available = false;
+            return tree;
+        }
     };
-    let rows: Vec<(String, String, String, i64, f64)> = stmt
+    let mut rows: Vec<(String, String, String, i64, f64)> = stmt
         .query_map([cutoff], |r| {
             Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get::<_, f64>(4).unwrap_or(0.0)))
         })
         .map(|it| it.flatten().collect())
         .unwrap_or_default();
+
+    if rows.is_empty() {
+        if let Ok(mut fallback_stmt) = conn.prepare(
+            "SELECT id, COALESCE(title,''), COALESCE(cwd,''), COALESCE(message_count,0), COALESCE(last_activity_at, started_at, 0)
+             FROM sessions
+             ORDER BY COALESCE(last_activity_at, started_at, 0) DESC
+             LIMIT 7",
+        ) {
+            rows = fallback_stmt
+                .query_map([], |r| {
+                    Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get::<_, f64>(4).unwrap_or(0.0)))
+                })
+                .map(|it| it.flatten().collect())
+                .unwrap_or_default();
+        }
+    }
 
     let now = now_epoch();
     for (id, title, cwd, messages, last) in rows {
@@ -187,6 +230,10 @@ pub fn build(db_path: &str) -> WorkTree {
 
     if let Ok(mut t) = conn.prepare("SELECT COUNT(*) FROM tasks WHERE status='running'") {
         tree.running_tasks = t.query_row([], |r| r.get::<_, i64>(0)).unwrap_or(0);
+    } else if let Ok(mut t) = conn.prepare("SELECT COUNT(*) FROM worker_executions WHERE status='running'") {
+        tree.running_tasks = t.query_row([], |r| r.get::<_, i64>(0)).unwrap_or(0);
+    } else {
+        tree.running_tasks = tree.active_sessions;
     }
     tree
 }
@@ -222,5 +269,50 @@ pub unsafe extern "C" fn mtl_worktree_json(db_path: *const c_char) -> *mut c_cha
     match serde_json::to_string(&tree) {
         Ok(s) => CString::new(s).map(|c| c.into_raw()).unwrap_or(std::ptr::null_mut()),
         Err(_) => std::ptr::null_mut(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn build_reads_hermes_sessions_tools_and_delegations() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = dir.path().join("state.db");
+        let conn = Connection::open(&db).unwrap();
+        conn.execute_batch(
+            "CREATE TABLE sessions(
+                id TEXT PRIMARY KEY, title TEXT, cwd TEXT, message_count INTEGER,
+                started_at REAL, last_activity_at REAL
+             );
+             CREATE TABLE messages(
+                id INTEGER PRIMARY KEY, session_id TEXT, tool_name TEXT
+             );
+             CREATE TABLE async_delegations(
+                delegation_id TEXT, parent_session_id TEXT, origin_session TEXT,
+                task_json TEXT, state TEXT
+             );
+             CREATE TABLE tasks(id TEXT, status TEXT);
+             INSERT INTO sessions VALUES('s1', 'Audit sécurité', '/Users/dany/missiontokenlive', 14, 1795000000.0, 1995000000.0);
+             INSERT INTO messages VALUES(1, 's1', 'terminal');
+             INSERT INTO messages VALUES(2, 's1', 'terminal');
+             INSERT INTO messages VALUES(3, 's1', 'execute_code');
+             INSERT INTO async_delegations VALUES('d1', 's1', 's1', '{\"goal\":\"Vérifier RLS\"}', 'running');
+             INSERT INTO tasks VALUES('t1', 'running');",
+        )
+        .unwrap();
+
+        let tree = build(db.to_str().unwrap());
+        assert!(tree.available);
+        assert_eq!(tree.running_tasks, 1);
+        assert_eq!(tree.branches.len(), 1);
+        assert_eq!(tree.branches[0].title, "Audit sécurité");
+        assert_eq!(tree.branches[0].project, "missiontokenlive");
+        assert_eq!(tree.branches[0].tools.len(), 2);
+        assert_eq!(tree.branches[0].tools[0].name, "terminal");
+        assert_eq!(tree.branches[0].tools[0].count, 2);
+        assert_eq!(tree.branches[0].delegations.len(), 1);
+        assert_eq!(tree.branches[0].delegations[0].goal, "Vérifier RLS");
     }
 }
