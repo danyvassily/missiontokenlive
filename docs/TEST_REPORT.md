@@ -6,10 +6,10 @@ Dernière exécution : 18 novembre 2026, Mac Apple Silicon (macOS 27.3), Rust 1.
 
 | Suite | Tests | Résultat |
 |---|---|---|
-| `cargo test -p mission-token-core` | 12 | OK |
-| `cargo test -p mission-token-storage` | 3 (+1 intégration) | OK |
+| `cargo test -p mission-token-core` | 18 (dont 6 alertes) | OK |
+| `cargo test -p mission-token-storage` | 3 + 3 cycle de vie + 1 seed | OK |
 | `cargo test -p mission-token-collectors` | 3 | OK |
-| `cargo test -p mission-token-ffi` | 4 | OK |
+| `cargo test -p mission-token-ffi` | 5 | OK |
 | `swift test` | 5 | OK |
 | `bash scripts/build.sh` | — | `dist/MissionTokenLive.app` produit |
 
@@ -27,6 +27,11 @@ Dernière exécution : 18 novembre 2026, Mac Apple Silicon (macOS 27.3), Rust 1.
 6. **Snapshot FFI** : aller-retour JSON complet, 6 agents / 10 tâches / KPI présents.
 7. **Format français** : `12,48 $`, virgule décimale, chiffres tabulaires.
 8. **Agrégat de fiabilité** : le pire niveau l'emporte (`worst_reliability_wins`).
+9. **Alertes** : seuils 80/90/100 % sans doublon, solde faible uniquement avec un montant réel,
+   tâche longue vs médiane de l'agent, échecs répétés, provider indisponible.
+10. **Corbeille** : envoi, restauration, non-purge avant 30 jours, purge après expiration,
+    et vérification que seules les données internes disparaissent.
+11. **Réglages** : aller-retour complet via la FFI (budget 450,50 / 85 / 97 / Dock masqué).
 
 ## Bugs trouvés par vérification visuelle et corrigés
 

@@ -3,11 +3,13 @@
 //! Ce crate ne fait aucune E/S : il est testable seul et partagé par le stockage,
 //! les collecteurs et la FFI.
 
+pub mod alerts;
 pub mod domain;
 pub mod money;
 pub mod pricing;
 pub mod reliability;
 
+pub use alerts::{evaluate, AlertInputs};
 pub use domain::*;
 pub use money::{CostValue, Usd};
 pub use pricing::{PricingTable, Rate, RateEntry};

@@ -127,6 +127,59 @@ pub extern "C" fn mtl_project_action(
     }
 }
 
+/// Purge les projets dont la corbeille a expiré (30 jours). Renvoie le nombre purgé, ou -1.
+#[no_mangle]
+pub extern "C" fn mtl_sweep_trash(db_path: *const c_char) -> i32 {
+    let Some(path) = (unsafe { cstr_arg(db_path) }) else { return -1 };
+    let Ok(db) = mission_token_storage::Db::open(&path) else { return -1 };
+    match db.sweep_trash(chrono::Utc::now()) {
+        Ok(n) => n as i32,
+        Err(_) => -1,
+    }
+}
+
+/// Réglages courants en JSON (`budget`, `warn`, `critical`, `hideDock`). NULL si indisponible.
+#[no_mangle]
+pub extern "C" fn mtl_settings_json(db_path: *const c_char) -> *mut c_char {
+    let Some(path) = (unsafe { cstr_arg(db_path) }) else { return std::ptr::null_mut() };
+    let Ok(db) = mission_token_storage::Db::open(&path) else { return std::ptr::null_mut() };
+    let budget = db.monthly_budget().ok().flatten();
+    let warn = db.setting("budget.alert.pct").ok().flatten().and_then(|v| v.parse::<i32>().ok()).unwrap_or(80);
+    let critical = db.setting("budget.critical.pct").ok().flatten().and_then(|v| v.parse::<i32>().ok()).unwrap_or(95);
+    let hide_dock = db.setting("ui.hideDockIcon").ok().flatten().map(|v| v == "true").unwrap_or(false);
+    let json = serde_json::json!({
+        "budget": budget,
+        "warn": warn,
+        "critical": critical,
+        "hideDock": hide_dock,
+    });
+    to_c_string(json.to_string())
+}
+
+/// Enregistre les réglages. `budget` vide = pas de budget défini. 0 = succès.
+#[no_mangle]
+pub extern "C" fn mtl_save_settings(
+    db_path: *const c_char,
+    budget: *const c_char,
+    warn: i32,
+    critical: i32,
+    hide_dock: i32,
+) -> i32 {
+    let Some(path) = (unsafe { cstr_arg(db_path) }) else { return -1 };
+    let budget_value = unsafe { cstr_arg(budget) }
+        .and_then(|v| v.trim().replace(',', ".").parse::<f64>().ok());
+    let Ok(db) = mission_token_storage::Db::open(&path) else { return -1 };
+    match db.save_settings(
+        budget_value,
+        warn.clamp(1, 100) as u8,
+        critical.clamp(1, 100) as u8,
+        hide_dock != 0,
+    ) {
+        Ok(()) => 0,
+        Err(_) => -1,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -158,6 +211,25 @@ mod tests {
         let proj = v["projects"].as_array().unwrap().iter()
             .find(|p| p["id"] == "prj_agorax").unwrap();
         assert_eq!(proj["status"], "archived");
+    }
+
+    #[test]
+    fn settings_round_trip_through_ffi() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = dir.path().join("mtl.db");
+        let c = CString::new(db.to_str().unwrap()).unwrap();
+        assert_eq!(mtl_seed_demo(c.as_ptr()), 0);
+        let budget = CString::new("450,50").unwrap();
+        assert_eq!(mtl_save_settings(c.as_ptr(), budget.as_ptr(), 85, 97, 1), 0);
+        let p = mtl_settings_json(c.as_ptr());
+        assert!(!p.is_null());
+        let json = unsafe { CStr::from_ptr(p).to_str().unwrap().to_string() };
+        mtl_free_string(p);
+        let v: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(v["warn"], 85);
+        assert_eq!(v["critical"], 97);
+        assert_eq!(v["hideDock"], true);
+        assert!((v["budget"].as_f64().unwrap() - 450.50).abs() < 1e-9);
     }
 
     #[test]

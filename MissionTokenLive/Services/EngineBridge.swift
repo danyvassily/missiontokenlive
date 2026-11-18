@@ -47,6 +47,42 @@ enum EngineBridge {
         return (try? JSONDecoder.mtl.decode([TaskItem].self, from: Data(json.utf8))) ?? []
     }
 
+    struct Settings: Codable {
+        let budget: Double?
+        let warn: Int
+        let critical: Int
+        let hideDock: Bool
+
+        static let fallback = Settings(budget: nil, warn: 80, critical: 95, hideDock: false)
+    }
+
+    static func settings() -> Settings {
+        let path = databaseURL().path
+        guard let c = path.withCString({ mtl_settings_json($0) }) else { return .fallback }
+        defer { mtl_free_string(c) }
+        let json = String(cString: c)
+        return (try? JSONDecoder().decode(Settings.self, from: Data(json.utf8))) ?? .fallback
+    }
+
+    @discardableResult
+    static func saveSettings(budget: String, warn: Double, critical: Double, hideDock: Bool) -> Bool {
+        let path = databaseURL().path
+        let code = path.withCString { db in
+            budget.withCString { b in
+                mtl_save_settings(db, b, Int32(warn), Int32(critical), hideDock ? 1 : 0)
+            }
+        }
+        return code == 0
+    }
+
+    /// Purge les fiches dont la corbeille a expiré. Appelé au démarrage.
+    @discardableResult
+    static func sweepTrash() -> Int {
+        let path = databaseURL().path
+        let n = path.withCString { mtl_sweep_trash($0) }
+        return Int(n)
+    }
+
     /// Actions de gestion des projets (locales, réversibles sauf purge).
     @discardableResult
     static func projectAction(id: String, action: String) -> Bool {

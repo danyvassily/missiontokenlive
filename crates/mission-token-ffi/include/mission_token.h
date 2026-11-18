@@ -31,6 +31,15 @@ char *mtl_desktop_activity_json(void);
  * 0 = succès, -1 = argument invalide, -2 = base, -3 = opération, -4 = action inconnue. */
 int32_t mtl_project_action(const char *db_path, const char *project_id, const char *action);
 
+/* Purge les corbeilles expirées. Renvoie le nombre purgé, ou -1. */
+int32_t mtl_sweep_trash(const char *db_path);
+
+/* Réglages en JSON : {"budget":…,"warn":…,"critical":…,"hideDock":…}. NULL si indisponible. */
+char *mtl_settings_json(const char *db_path);
+
+/* Enregistre les réglages (budget vide = aucun budget). 0 = succès. */
+int32_t mtl_save_settings(const char *db_path, const char *budget, int32_t warn_pct, int32_t critical_pct, int32_t hide_dock);
+
 #ifdef __cplusplus
 }
 #endif

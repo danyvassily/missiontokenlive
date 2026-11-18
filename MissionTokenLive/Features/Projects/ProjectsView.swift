@@ -43,6 +43,13 @@ struct ProjectsView: View {
                                         .font(Theme.caption(10)).foregroundStyle(Theme.textTertiary).lineLimit(1)
                                 }
                                 Spacer()
+                                if project.status == .trashed, let purge = project.purge_after {
+                                    let days = Calendar.current.dateComponents([.day], from: Date(), to: purge).day ?? 0
+                                    Text("purge dans \(max(0, days)) j")
+                                        .font(Theme.caption(10)).foregroundStyle(Theme.warn)
+                                        .padding(.horizontal, 7).padding(.vertical, 3)
+                                        .background(Theme.warn.opacity(0.1)).clipShape(Capsule())
+                                }
                                 if let budget = project.budget {
                                     Text(CostValue.formatFR(budget)).font(Theme.caption(11)).monospacedDigit()
                                         .foregroundStyle(Theme.textSecondary)

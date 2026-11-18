@@ -573,6 +573,51 @@ impl Db {
         Ok(())
     }
 
+    /// Purge les fiches dont la corbeille a expiré (30 jours).
+    ///
+    /// Ne supprime que les données internes de MissionTokenLive : tâches rattachées, fiche
+    /// projet, entrée de corbeille. Aucun fichier, dépôt ou tâche externe n'est touché.
+    pub fn sweep_trash(&self, now: DateTime<Utc>) -> Result<usize> {
+        let mut st = self.conn.prepare(
+            "SELECT project_id FROM trash WHERE purge_after <= ?1",
+        )?;
+        let ids: Vec<String> = st
+            .query_map(params![now.to_rfc3339()], |r| r.get::<_, String>(0))?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        drop(st);
+        for id in &ids {
+            self.purge_project(id)?;
+        }
+        Ok(ids.len())
+    }
+
+    /// Écrit les réglages utilisateur (budget, seuils, interface).
+    pub fn save_settings(
+        &self,
+        monthly_budget: Option<f64>,
+        warn_pct: u8,
+        critical_pct: u8,
+        hide_dock_icon: bool,
+    ) -> Result<()> {
+        if let Some(b) = monthly_budget {
+            self.set_setting("budget.monthly", &format!("{b:.2}"))?;
+        }
+        self.set_setting("budget.alert.pct", &warn_pct.to_string())?;
+        self.set_setting("budget.critical.pct", &critical_pct.to_string())?;
+        self.set_setting("ui.hideDockIcon", if hide_dock_icon { "true" } else { "false" })?;
+        Ok(())
+    }
+
+    pub fn monthly_budget(&self) -> Result<Option<f64>> {
+        Ok(self.setting("budget.monthly")?.and_then(|v| v.parse().ok()))
+    }
+
+    /// Dépenses cumulées depuis le début du mois courant.
+    pub fn month_spent(&self, now: DateTime<Utc>) -> f64 {
+        let start = now.date_naive().with_day(1).unwrap().and_hms_opt(0, 0, 0).unwrap().and_utc();
+        self.sum_cost_between(start, now).0.0
+    }
+
     // ---------- agrégats ----------
 
     pub fn sum_cost_between(&self, from: DateTime<Utc>, to: DateTime<Utc>) -> (Usd, Reliability) {
@@ -608,7 +653,7 @@ impl Db {
         let projects = self.projects(None)?;
         let agents = self.agents()?;
         let timeline = self.timeline(30)?;
-        let alerts = self.alerts()?;
+        let stored_alerts = self.alerts()?;
         let providers = self.providers()?;
         let software = self.software()?;
 
@@ -659,7 +704,32 @@ impl Db {
             progress: None,
         });
 
-        Ok(Snapshot { generated_at: now, kpis, agents, timeline, alerts, providers, tasks, software, projects })
+        let mut snapshot = Snapshot {
+            generated_at: now,
+            kpis,
+            agents,
+            timeline,
+            alerts: stored_alerts,
+            providers,
+            tasks,
+            software,
+            projects,
+        };
+
+        // Alertes calculées : on complète les alertes stockées sans les dupliquer.
+        let inputs = mission_token_core::AlertInputs {
+            snapshot: &snapshot,
+            monthly_budget: budget,
+            month_spent: month.0,
+            now,
+        };
+        for alert in mission_token_core::alerts::evaluate(&inputs) {
+            if !snapshot.alerts.iter().any(|a| a.id == alert.id) {
+                snapshot.alerts.push(alert);
+            }
+        }
+        snapshot.alerts.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+        Ok(snapshot)
     }
 }
 

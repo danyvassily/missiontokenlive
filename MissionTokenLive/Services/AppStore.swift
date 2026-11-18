@@ -47,6 +47,7 @@ final class AppStore: ObservableObject {
     @Published var searchText: String = ""
     @Published var statusFilter: TaskStatus?
     @Published var showingDemoData: Bool = false
+    @Published var settings: EngineBridge.Settings = .fallback
 
     private var timer: AnyCancellable?
 
@@ -59,6 +60,9 @@ final class AppStore: ObservableObject {
         if ProcessInfo.processInfo.environment["MTL_DEMO"] == "1" {
             EngineBridge.seedDemoIfNeeded()
         }
+        // Corbeille : purge uniquement les données internes arrivées à échéance (30 jours).
+        _ = EngineBridge.sweepTrash()
+        settings = EngineBridge.settings()
         refresh()
         timer = Timer.publish(every: 2, on: .main, in: .common)
             .autoconnect()
@@ -120,6 +124,7 @@ final class AppStore: ObservableObject {
         let tokens = tasks.reduce(UInt64(0)) { $0 + $1.tokens.total }
         let kpis: [Kpi] = [
             costToday,
+            budgetKpi(todayKnownCost: known.isEmpty ? nil : known.reduce(0, +)),
             Kpi(key: "tokens_month", label: "Tokens mesurés", value: tokensText(tokens),
                 detail: "\(tasks.count) sessions Hermès", reliability: tokens > 0 ? .real : .unavailable, progress: nil),
             Kpi(key: "active_agents", label: "Agents actifs", value: "\(agents.filter { $0.status == .active }.count)",
@@ -207,6 +212,19 @@ final class AppStore: ObservableObject {
             }
         }
         return items
+    }
+
+    /// Budget restant, uniquement s'il existe un budget ET un coût connu.
+    private static func budgetKpi(todayKnownCost: Double?) -> Kpi {
+        let settings = EngineBridge.settings()
+        guard let budget = settings.budget, budget > 0, let spent = todayKnownCost else {
+            return Kpi(key: "budget_remaining", label: "Budget restant", value: "—",
+                       detail: "budget ou coût non disponible", reliability: .unavailable, progress: nil)
+        }
+        let remaining = max(0, budget - spent)
+        return Kpi(key: "budget_remaining", label: "Budget restant", value: CostValue.formatFR(remaining),
+                   detail: "sur \(CostValue.formatFR(budget))", reliability: .calculated,
+                   progress: min(1, max(0, remaining / budget)))
     }
 
     var apiProviders: [Provider] { snapshot.providers.filter { $0.kind != .subscription } }

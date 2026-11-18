@@ -2,9 +2,11 @@ import SwiftUI
 
 struct SettingsView: View {
     @EnvironmentObject private var store: AppStore
-    @State private var monthlyBudget: String = "300"
+    @State private var monthlyBudget: String = ""
     @State private var warnPct: Double = 80
     @State private var criticalPct: Double = 95
+    @State private var hideDock: Bool = false
+    @State private var loaded = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -45,6 +47,11 @@ struct SettingsView: View {
                                 bullet("Aucune clé API affichée — Trousseau macOS uniquement")
                                 bullet("Journalisation locale sur 30 jours")
                                 bullet("ChatGPT et Gemini : présence seulement")
+                                Toggle("Masquer l'icône du Dock", isOn: $hideDock)
+                                    .toggleStyle(.switch)
+                                    .font(Theme.caption(11))
+                                    .foregroundStyle(Theme.textSecondary)
+                                    .padding(.top, 4)
                             }
                         }
                     }
@@ -68,6 +75,29 @@ struct SettingsView: View {
                 .padding(.horizontal, 24).padding(.bottom, 24)
             }
         }
+        .onAppear(perform: load)
+        .onChange(of: monthlyBudget) { _ in persist() }
+        .onChange(of: warnPct) { _ in persist() }
+        .onChange(of: criticalPct) { _ in persist() }
+        .onChange(of: hideDock) { _ in persist() }
+    }
+
+    private func load() {
+        let s = EngineBridge.settings()
+        monthlyBudget = s.budget.map { String(format: "%.0f", $0) } ?? ""
+        warnPct = Double(s.warn)
+        criticalPct = Double(s.critical)
+        hideDock = s.hideDock
+        loaded = true
+    }
+
+    /// Écriture immédiate : pas de bouton « Enregistrer », on ne perd rien en fermant.
+    private func persist() {
+        guard loaded else { return }
+        EngineBridge.saveSettings(budget: monthlyBudget, warn: warnPct, critical: criticalPct, hideDock: hideDock)
+        store.settings = EngineBridge.settings()
+        // Barre de menus discrète : masquer l'icône du Dock quand l'utilisateur le demande.
+        NSApp.setActivationPolicy(hideDock ? .accessory : .regular)
     }
 
     private func labeledField(_ label: String, text: Binding<String>) -> some View {
