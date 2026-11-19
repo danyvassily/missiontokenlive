@@ -2,378 +2,268 @@ import SwiftUI
 import Foundation
 import CoreGraphics
 
-/// Vue 3D temps réel de l'arborescence de travail Hermès.
-///
-/// Architecture graphique :
-/// 1. **Projection perspective 3D maison** : chaque nœud possède des coordonnées `(x, y, z)` dans
-///    l'espace monde. À chaque image, une rotation lacet/tangage (rotation automatique autour de Y,
-///    glissement manuel et parallaxe souris) est appliquée, puis le point est projeté sur le plan 2D
-///    via le facteur perspectif `focale / (distanceCamera + z)`.
-/// 2. **Tri en profondeur (algorithme du peintre)** : les liens et les nœuds sont triés du plus
-///    éloigné (`profondeur` maximale) au plus proche (`profondeur` minimale) afin que les éléments
-///    au premier plan recouvrent naturellement ceux de l'arrière-plan, avec taille et opacité
-///    modulées par la distance.
-/// 3. **Délestage intelligent et anti-superposition** : les branches actives déploient leurs outils
-///    et délégations, tandis que les branches au repos regroupent leurs outils en un nœud compact
-///    `+N outils` pour garder la scène aérée. Les libellés gardent une taille de police fixe et un
-///    solveur spatial évite toute collision.
-/// 4. **Interactivité directe** : le survol met en évidence le chemin complet `Hermès → nœud`, et
-///    le clic ouvre un panneau latéral présentant les données réelles de `WorkTree` (titre, projet,
-///    messages, outils avec compteurs, état des délégations, processus de harnais).
+/// La topologie est conservée entre les images ; seul le rendu évolue à chaque frame.
 struct WorkTree3DView: View {
     let tree: WorkTree
-
-    @State private var angleManuel: Double = 0
+    var software: [DesktopAppActivity] = []
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.scenePhase) private var scenePhase
+    @State private var scene: SceneArborescence3D
+    @State private var clock = FlowAnimationClock()
+    @State private var paused = false
+    @State private var autoRotation = false
+    @State private var rotationStartedAt: TimeInterval = 0
+    @State private var angleManuel: Double = -0.22
     @State private var angleGlissement: Double = 0
-    @State private var tempsOrigine: TimeInterval = Date.timeIntervalSinceReferenceDate
-    @State private var angleDepartRecentrage: Double = 0
-    @State private var dateRecentrage: TimeInterval = 0
-    @State private var parallaxeCible: CGPoint = .zero
-    @State private var positionSouris: CGPoint? = nil
-    @State private var idSurvole: String? = nil
-    @State private var idSelectionne: String? = nil
+    @State private var zoom: Double = 1
+    @State private var idSurvole: String?
+    @State private var idSelectionne: String?
+    @State private var showingActivity = false
 
-    /// Topologie 3D précalculée à partir des données décodées de `WorkTree`.
-    private var scene: SceneArborescence3D {
-        SceneArborescence3D(tree: tree)
+    init(tree: WorkTree, software: [DesktopAppActivity] = []) {
+        self.tree = tree
+        self.software = software
+        _scene = State(initialValue: SceneArborescence3D(tree: tree))
     }
+
+    private var isAnimating: Bool { !paused && !reduceMotion && scenePhase == .active }
+    private var showingInspector: Bool { showingActivity || idSelectionne != nil }
 
     var body: some View {
-        ZStack(alignment: .topLeading) {
-            fondAtmospherique
-
-            if !tree.available || tree.branches.isEmpty {
-                etatVideCentre
-            } else {
-                canvasTridimensionnel
+        VStack(spacing: 0) {
+            header
+            Divider().overlay(Theme.borderSoft)
+            HStack(spacing: 0) {
+                ZStack {
+                    RadialGradient(colors: [Theme.accent.opacity(0.045), Theme.bg],
+                                   center: .center, startRadius: 20, endRadius: 500)
+                    if !tree.available {
+                        ContentUnavailableView("Activité indisponible", systemImage: "point.3.connected.trianglepath.dotted",
+                                               description: Text("La base locale d’Hermès n’est pas accessible."))
+                    } else {
+                        canvasTridimensionnel
+                    }
+                }
+                .clipped()
+                if showingInspector {
+                    Divider().overlay(Theme.borderSoft)
+                    ScrollView {
+                        if let node = scene.noeudParIdentifiant(idSelectionne) {
+                            panneauDetail(pour: node, estVerrouille: true)
+                                .padding(14)
+                        } else {
+                            activityPanel.padding(16)
+                        }
+                    }
+                    .frame(width: 300)
+                    .background(Theme.surface.opacity(0.45))
+                }
             }
-
-            hudSuperpose
+            footer
         }
         .background(Theme.bg)
+        .onAppear { clock.setRunning(isAnimating, at: Date.timeIntervalSinceReferenceDate) }
+        .onChange(of: isAnimating) { _, value in
+            clock.setRunning(value, at: Date.timeIntervalSinceReferenceDate)
+        }
+        .onChange(of: tree) { _, value in
+            scene = SceneArborescence3D(tree: value)
+            if let id = idSelectionne, scene.noeudParIdentifiant(id) == nil { idSelectionne = nil }
+            if let id = idSurvole, scene.noeudParIdentifiant(id) == nil { idSurvole = nil }
+        }
+        .onDisappear { clock.setRunning(false, at: Date.timeIntervalSinceReferenceDate) }
     }
 
-    // MARK: - Scène 3D animée (60 fps)
+    private var header: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(alignment: .top) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Flux").font(Theme.title()).foregroundStyle(Theme.textPrimary)
+                    Text("Sessions, délégations et outils — activité observée sur ce Mac")
+                        .font(Theme.caption(12)).foregroundStyle(Theme.textSecondary)
+                }
+                Spacer()
+                Button {
+                    showingActivity.toggle()
+                    idSelectionne = nil
+                } label: {
+                    Label("Agents & sessions", systemImage: "sidebar.right")
+                }
+                .buttonStyle(.bordered)
+                .tint(showingActivity ? Theme.accent : Theme.textSecondary)
+                .help("Voir les sessions et la présence des logiciels")
+            }
+            ViewThatFits(in: .horizontal) {
+                HStack {
+                    metrics
+                    Spacer(minLength: 16)
+                    controls
+                }
+                VStack(alignment: .leading, spacing: 12) {
+                    metrics
+                    controls
+                }
+            }
+        }
+        .padding(.horizontal, 24).padding(.vertical, 18)
+    }
+
+    private var metrics: some View {
+        HStack(spacing: 16) {
+            compteurHUD(valeur: "\(tree.activeSessions)", libelle: "sessions actives", teinte: Theme.ok)
+            compteurHUD(valeur: "\(tree.runningTasks)", libelle: "tâches en cours", teinte: Theme.accent)
+            compteurHUD(valeur: "\(tree.branches.count)", libelle: "sessions observées", teinte: Theme.textSecondary)
+        }
+        .accessibilityElement(children: .combine)
+    }
+
+    private var controls: some View {
+        HStack(spacing: 8) {
+            Button {
+                paused.toggle()
+            } label: {
+                Label(paused ? "Reprendre" : "Pause", systemImage: paused ? "play.fill" : "pause.fill")
+            }
+            .disabled(reduceMotion)
+            .help(reduceMotion ? "Animations réduites selon les réglages d’accessibilité macOS" : "Mettre les animations en pause, sans arrêter les mises à jour")
+            Button {
+                let now = clock.value(at: Date.timeIntervalSinceReferenceDate)
+                if autoRotation { angleManuel += (now - rotationStartedAt) * 0.035 }
+                rotationStartedAt = now
+                autoRotation.toggle()
+            } label: {
+                Label("Rotation", systemImage: "rotate.3d")
+            }
+            .tint(autoRotation ? Theme.accent : Theme.textSecondary)
+            .disabled(reduceMotion)
+            .help("Activer ou arrêter la rotation lente de la carte")
+            Divider().frame(height: 18)
+            Button { zoom = max(0.65, zoom - 0.1) } label: { Image(systemName: "minus.magnifyingglass") }
+                .disabled(zoom <= 0.65).accessibilityLabel("Réduire la carte")
+            Text("\(Int((zoom * 100).rounded())) %")
+                .font(Theme.caption(11)).monospacedDigit().frame(width: 43)
+            Button { zoom = min(1.5, zoom + 0.1) } label: { Image(systemName: "plus.magnifyingglass") }
+                .disabled(zoom >= 1.5).accessibilityLabel("Agrandir la carte")
+            Button {
+                angleManuel = -0.22
+                angleGlissement = 0
+                zoom = 1
+                rotationStartedAt = clock.value(at: Date.timeIntervalSinceReferenceDate)
+            } label: { Image(systemName: "arrow.counterclockwise") }
+                .accessibilityLabel("Recentrer la carte").help("Recentrer la carte")
+        }
+        .buttonStyle(.bordered)
+        .controlSize(.small)
+    }
 
     private var canvasTridimensionnel: some View {
-        TimelineView(.animation(minimumInterval: 1.0 / 60.0)) { timeline in
+        TimelineView(.animation(minimumInterval: 1.0 / 60.0, paused: !isAnimating)) { timeline in
             GeometryReader { geo in
-                let maintenant = timeline.date.timeIntervalSinceReferenceDate
-                let angleCourant = calculerAngleRotation(maintenant: maintenant)
-                let tangageCourant = 0.23 + Double(parallaxeCible.y) * 0.11
-                let cheminMisEnEvidence = scene.cheminDepuisRacine(
-                    vers: idSurvole ?? idSelectionne
-                )
-
+                let time = clock.value(at: timeline.date.timeIntervalSinceReferenceDate)
+                let angle = angleManuel + angleGlissement + (autoRotation && !reduceMotion ? (time - rotationStartedAt) * 0.035 : 0)
+                let highlighted = scene.cheminDepuisRacine(vers: idSurvole ?? idSelectionne)
                 Canvas { context, size in
-                    scene.dessiner(
-                        dans: &context,
-                        taille: size,
-                        lacet: angleCourant,
-                        tangage: tangageCourant,
-                        parallaxe: parallaxeCible,
-                        temps: maintenant,
-                        idSurvole: idSurvole,
-                        idSelectionne: idSelectionne,
-                        cheminActif: cheminMisEnEvidence
-                    )
+                    scene.dessiner(dans: &context, taille: size, lacet: angle, tangage: 0.12,
+                                   parallaxe: .zero, temps: time, zoom: zoom,
+                                   idSurvole: idSurvole, idSelectionne: idSelectionne, cheminActif: highlighted)
+                }
+                .accessibilityRepresentation {
+                    VStack {
+                        ForEach(scene.noeuds, id: \.identifiant) { node in
+                            Button("\(node.categorie.titreFR) : \(node.titreComplet), \(node.sousLibelle)") {
+                                idSelectionne = node.identifiant
+                            }
+                        }
+                    }
                 }
                 .contentShape(Rectangle())
                 .gesture(
-                    SpatialTapGesture()
-                        .onEnded { event in
-                            let hit = scene.noeudSousPoint(
-                                event.location,
-                                taille: geo.size,
-                                lacet: angleCourant,
-                                tangage: tangageCourant,
-                                parallaxe: parallaxeCible,
-                                temps: maintenant
-                            )
-                            withAnimation(.easeInOut(duration: 0.22)) {
-                                if let hit {
-                                    idSelectionne = (idSelectionne == hit.identifiant) ? nil : hit.identifiant
-                                } else {
-                                    idSelectionne = nil
-                                }
-                            }
-                        }
-                        .exclusively(
-                            before: DragGesture(minimumDistance: 3)
-                                .onChanged { valeur in
-                                    angleGlissement = Double(valeur.translation.width) / 220.0
-                                }
-                                .onEnded { _ in
-                                    angleManuel += angleGlissement
-                                    angleGlissement = 0
-                                }
-                        )
+                    SpatialTapGesture().onEnded { event in
+                        let hit = scene.noeudSousPoint(event.location, taille: geo.size, lacet: angle,
+                                                      tangage: 0.12, parallaxe: .zero, temps: time, zoom: zoom)
+                        idSelectionne = hit?.identifiant
+                    }
+                    .exclusively(before: DragGesture(minimumDistance: 3)
+                        .onChanged { angleGlissement = Double($0.translation.width) / 260 }
+                        .onEnded { _ in angleManuel += angleGlissement; angleGlissement = 0 })
                 )
                 .onContinuousHover { phase in
                     switch phase {
-                    case .active(let position):
-                        positionSouris = position
-                        let largeur = max(geo.size.width, 1)
-                        let hauteur = max(geo.size.height, 1)
-                        let nx = max(-1.0, min(1.0, (position.x / largeur - 0.5) * 2.0))
-                        let ny = max(-1.0, min(1.0, (position.y / hauteur - 0.5) * 2.0))
-                        parallaxeCible = CGPoint(x: nx, y: ny)
-
-                        let hit = scene.noeudSousPoint(
-                            position,
-                            taille: geo.size,
-                            lacet: angleCourant,
-                            tangage: tangageCourant,
-                            parallaxe: parallaxeCible,
-                            temps: maintenant
-                        )
-                        if idSurvole != hit?.identifiant {
-                            idSurvole = hit?.identifiant
-                        }
-                    case .ended:
-                        positionSouris = nil
-                        idSurvole = nil
-                        withAnimation(.easeOut(duration: 0.45)) {
-                            parallaxeCible = .zero
-                        }
+                    case .active(let point):
+                        idSurvole = scene.noeudSousPoint(point, taille: geo.size, lacet: angle,
+                                                        tangage: 0.12, parallaxe: .zero, temps: time, zoom: zoom)?.identifiant
+                    case .ended: idSurvole = nil
                     }
                 }
             }
         }
     }
 
-    /// Calcule l'angle de rotation Y en combinant rotation rythmée continue (0,15 rad/s),
-    /// parallaxe souris et interpolation cubique fluide lors d'un appui sur « Recentrer ».
-    private func calculerAngleRotation(maintenant: TimeInterval) -> Double {
-        let vitesseRotation = 0.15
-        let rotationAuto = (maintenant - tempsOrigine) * vitesseRotation
-        let parallaxeLacet = Double(parallaxeCible.x) * 0.16
-
-        let dureeRecentrage = 0.55
-        let ecouleRecentrage = maintenant - dateRecentrage
-        var amortissementRecentrage = 0.0
-        if dateRecentrage > 0 && ecouleRecentrage < dureeRecentrage {
-            let t = max(0.0, min(1.0, ecouleRecentrage / dureeRecentrage))
-            let easeOut = 1.0 - pow(1.0 - t, 3.0)
-            amortissementRecentrage = angleDepartRecentrage * (1.0 - easeOut)
-        }
-
-        return angleManuel + angleGlissement + rotationAuto + parallaxeLacet + amortissementRecentrage
-    }
-
-    private func recentrerScene() {
-        let maintenant = Date.timeIntervalSinceReferenceDate
-        let angleActuel = calculerAngleRotation(maintenant: maintenant)
-        let deuxPi = Double.pi * 2.0
-        var residu = angleActuel.truncatingRemainder(dividingBy: deuxPi)
-        if residu > Double.pi { residu -= deuxPi }
-        if residu < -Double.pi { residu += deuxPi }
-
-        angleDepartRecentrage = residu
-        dateRecentrage = maintenant
-        tempsOrigine = maintenant
-        angleManuel = 0
-        angleGlissement = 0
-        withAnimation(.easeOut(duration: 0.45)) {
-            parallaxeCible = .zero
-        }
-    }
-
-    // MARK: - Fond et État vide
-
-    private var fondAtmospherique: some View {
-        ZStack {
-            Theme.bg
-            RadialGradient(
-                colors: [
-                    Theme.accent.opacity(0.09),
-                    Theme.surface.opacity(0.38),
-                    Theme.bg
-                ],
-                center: .center,
-                startRadius: 24,
-                endRadius: 540
-            )
-        }
-        .ignoresSafeArea()
-    }
-
-    private var etatVideCentre: some View {
-        VStack(spacing: 14) {
-            ZStack {
-                Circle()
-                    .fill(
-                        RadialGradient(
-                            colors: [Theme.accent.opacity(0.22), .clear],
-                            center: .center,
-                            startRadius: 4,
-                            endRadius: 44
-                        )
-                    )
-                    .frame(width: 88, height: 88)
-
-                Circle()
-                    .stroke(Theme.border, lineWidth: 1)
-                    .frame(width: 48, height: 48)
-
-                Circle()
-                    .fill(tree.available ? Theme.accent : Theme.textTertiary)
-                    .frame(width: 14, height: 14)
-            }
-
-            Text(tree.available ? "Aucune session récente dans l'arborescence" : "Arborescence de travail indisponible")
-                .font(Theme.section(14))
-                .foregroundStyle(Theme.textPrimary)
-
-            Text(
-                tree.available
-                    ? "Hermès est en veille. Ouvrez une session ou lancez une tâche pour observer les flux en trois dimensions."
-                    : "La base locale d'Hermès n'est pas joignable pour le moment."
-            )
-            .font(Theme.body(12))
-            .foregroundStyle(Theme.textSecondary)
-            .multilineTextAlignment(.center)
-            .frame(maxWidth: 390)
-
+    private var footer: some View {
+        ViewThatFits(in: .horizontal) {
             HStack(spacing: 16) {
-                pastilleEtatVide(titre: "Racine", valeur: textePropre(tree.rootLabel))
-                pastilleEtatVide(titre: "Harnais actifs", valeur: "\(tree.harnesses.filter { $0.active }.count)")
+                navigationHint
+                Spacer()
+                legend
             }
-            .padding(.top, 4)
+            VStack(alignment: .leading, spacing: 8) { navigationHint; legend }
         }
-        .padding(28)
-        .background(Theme.surface.opacity(0.84))
-        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .stroke(Theme.borderSoft, lineWidth: 1)
-        )
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
+        .padding(.horizontal, 24).padding(.vertical, 12)
+        .background(Theme.surface.opacity(0.4))
     }
 
-    private func pastilleEtatVide(titre: String, valeur: String) -> some View {
-        HStack(spacing: 6) {
-            Text(titre)
-                .font(Theme.micro())
-                .foregroundStyle(Theme.textTertiary)
-            Text(valeur)
-                .font(Theme.body(12, weight: .medium))
-                .foregroundStyle(Theme.textSecondary)
-        }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 5)
-        .background(Theme.bg.opacity(0.65))
-        .clipShape(Capsule())
-        .overlay(Capsule().stroke(Theme.borderSoft, lineWidth: 1))
+    private var navigationHint: some View {
+        Text(reduceMotion ? "Mouvements réduits · Glisser pour orienter · Cliquer pour inspecter" : "Glisser pour orienter · Cliquer pour inspecter")
+            .font(Theme.caption(11)).foregroundStyle(Theme.textSecondary)
     }
 
-    // MARK: - HUD en surimpression + panneau latéral de détail
-
-    private var hudSuperpose: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack(alignment: .top, spacing: 20) {
-                VStack(alignment: .leading, spacing: 10) {
-                    VStack(alignment: .leading, spacing: 3) {
-                        Text("Arborescence de travail")
-                            .font(Theme.title())
-                            .foregroundStyle(Theme.textPrimary)
-                        Text("Synergie temps réel : \(textePropre(tree.rootLabel)) · sessions · outils · délégations · harnais")
-                            .font(Theme.caption(11))
-                            .foregroundStyle(Theme.textSecondary)
-                    }
-
-                    HStack(spacing: 14) {
-                        compteurHUD(
-                            valeur: "\(tree.activeSessions)",
-                            libelle: "sessions actives",
-                            teinte: tree.activeSessions > 0 ? Theme.ok : Theme.textTertiary
-                        )
-                        separateurVerticalHUD
-                        compteurHUD(
-                            valeur: "\(tree.runningTasks)",
-                            libelle: "tâches en cours",
-                            teinte: tree.runningTasks > 0 ? Theme.accent : Theme.textTertiary
-                        )
-                        separateurVerticalHUD
-                        compteurHUD(
-                            valeur: "\(tree.branches.count)",
-                            libelle: "branches",
-                            teinte: Theme.textSecondary
-                        )
-                    }
-                    .padding(.horizontal, 14)
-                    .padding(.vertical, 9)
-                    .background(Theme.surface.opacity(0.86))
-                    .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 10, style: .continuous)
-                            .stroke(Theme.borderSoft, lineWidth: 1)
-                    )
-
-                    if tree.harnesses.contains(where: { $0.active }) {
-                        HStack(spacing: 8) {
-                            ForEach(tree.harnesses.filter { $0.active }) { harness in
-                                HStack(spacing: 5) {
-                                    Circle().fill(Theme.ok).frame(width: 5, height: 5)
-                                    Text(harness.name)
-                                        .font(Theme.micro())
-                                        .foregroundStyle(Theme.textSecondary)
-                                }
-                                .padding(.horizontal, 9)
-                                .padding(.vertical, 4)
-                                .background(Theme.surface.opacity(0.82))
-                                .clipShape(Capsule())
-                                .overlay(Capsule().stroke(Theme.borderSoft, lineWidth: 1))
-                            }
-                        }
-                    }
-                }
-
-                Spacer()
-
-                VStack(alignment: .trailing, spacing: 12) {
-                    Button(action: recentrerScene) {
-                        HStack(spacing: 6) {
-                            Image(systemName: "arrow.counterclockwise")
-                                .font(.system(size: 11, weight: .semibold))
-                            Text("Recentrer")
-                                .font(Theme.caption(10.5))
-                        }
-                        .foregroundStyle(Theme.textPrimary)
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 7)
-                        .background(Theme.surface.opacity(0.88))
-                        .clipShape(Capsule())
-                        .overlay(
-                            Capsule()
-                                .stroke(Theme.border, lineWidth: 1)
-                        )
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel("Recentrer l'arborescence 3D")
-
-                    if let noeud = scene.noeudParIdentifiant(idSelectionne ?? idSurvole) {
-                        panneauDetail(pour: noeud, estVerrouille: idSelectionne != nil)
-                            .transition(.opacity.combined(with: .move(edge: .trailing)))
-                    }
-                }
-            }
-
-            Spacer()
-
-            HStack(alignment: .bottom) {
-                Text("Glisser pour orienter · Survoler ou cliquer un nœud pour inspecter")
-                    .font(Theme.micro())
-                    .foregroundStyle(Theme.textTertiary)
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 6)
-                    .background(Theme.surface.opacity(0.72))
-                    .clipShape(Capsule())
-                Spacer()
-                legendeDiscrete
-            }
+    private var legend: some View {
+        HStack(spacing: 14) {
+            elementLegende(couleur: Theme.ok, texte: "Session active", pointille: false)
+            elementLegende(couleur: Theme.warn, texte: "Délégation en cours", pointille: true)
+            elementLegende(couleur: Theme.textTertiary, texte: "Au repos", pointille: false)
         }
-        .padding(22)
+    }
+
+    private var activityPanel: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            Text("Agents & sessions").font(Theme.section(16)).foregroundStyle(Theme.textPrimary)
+            Text("Sélectionnez une session pour voir ses outils et ses délégations.")
+                .font(Theme.caption(12)).foregroundStyle(Theme.textSecondary)
+            ForEach(tree.branches) { branch in
+                Button {
+                    idSelectionne = "branche-\(branch.id)"
+                } label: {
+                    HStack(alignment: .top, spacing: 9) {
+                        Circle().fill(branch.isActive ? Theme.ok : Theme.textTertiary).frame(width: 7, height: 7).padding(.top, 5)
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(branch.title).font(Theme.body(12, weight: .medium)).foregroundStyle(Theme.textPrimary).lineLimit(2)
+                            Text("\(branch.isActive ? "Active" : "Au repos") · \(branch.messages) messages")
+                                .font(Theme.caption(11)).foregroundStyle(Theme.textSecondary)
+                        }
+                        Spacer(minLength: 0)
+                    }
+                    .padding(10).frame(maxWidth: .infinity, alignment: .leading)
+                    .background(Theme.raised).clipShape(RoundedRectangle(cornerRadius: 8))
+                }.buttonStyle(.plain)
+            }
+            if tree.branches.isEmpty {
+                Text("Aucune session récente").font(Theme.caption(12)).foregroundStyle(Theme.textSecondary)
+            }
+            Divider().overlay(Theme.borderSoft)
+            Text("Logiciels sur ce Mac").font(Theme.section(13)).foregroundStyle(Theme.textPrimary)
+            ForEach(software.filter { $0.state != .closed }) { app in
+                HStack(spacing: 8) {
+                    Image(systemName: "macwindow").foregroundStyle(Theme.textSecondary)
+                    Text(app.display_name).font(Theme.body(12)).foregroundStyle(Theme.textPrimary)
+                    Spacer()
+                    Text(app.presence_only ? "Présence" : app.state.labelFR)
+                        .font(Theme.caption(11)).foregroundStyle(Theme.textSecondary)
+                }
+            }
+            Text("Un logiciel ouvert n’est pas nécessairement en train de travailler. Les pulsations suivent les sessions et délégations signalées en cours.")
+                .font(Theme.caption(11)).foregroundStyle(Theme.textSecondary)
+        }
     }
 
     @ViewBuilder
@@ -429,11 +319,11 @@ struct WorkTree3DView: View {
                     ForEach(b.tools) { tool in
                         HStack {
                             Text(tool.name)
-                                .font(Theme.caption(11))
+                                .font(Theme.caption(12))
                                 .foregroundStyle(Theme.textSecondary)
                             Spacer()
                             Text("\(tool.count)×")
-                                .font(Theme.caption(11))
+                                .font(Theme.caption(12))
                                 .monospacedDigit()
                                 .foregroundStyle(Theme.accent)
                         }
@@ -447,7 +337,7 @@ struct WorkTree3DView: View {
                     ForEach(b.delegations) { del in
                         VStack(alignment: .leading, spacing: 2) {
                             Text(del.goal)
-                                .font(Theme.caption(11))
+                                .font(Theme.caption(12))
                                 .foregroundStyle(Theme.textSecondary)
                                 .lineLimit(2)
                             Text(traduireEtatFR(del.state))
@@ -469,12 +359,14 @@ struct WorkTree3DView: View {
                 ligneDetail("Statut", traduireEtatFR(del.state))
 
             case .harnais(let h):
-                ligneDetail("Statut", h.active ? "Actif sur ce Mac" : "Aucun processus actif")
+                ligneDetail("Processus", h.active ? "Détecté sur ce Mac" : "Non détecté")
+                Text("La présence d’un logiciel ne prouve pas qu’il exécute une tâche.")
+                    .font(Theme.caption(12)).foregroundStyle(Theme.textSecondary)
                 ligneDetail("Détail", texteCourt(h.detail, maxCaracteres: 44))
             }
         }
         .padding(14)
-        .frame(width: 288, alignment: .leading)
+        .frame(maxWidth: .infinity, alignment: .leading)
         .background(Theme.surface.opacity(0.94))
         .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
         .overlay(
@@ -486,14 +378,15 @@ struct WorkTree3DView: View {
     private func ligneDetail(_ cle: String, _ valeur: String) -> some View {
         HStack(alignment: .firstTextBaseline) {
             Text(cle)
-                .font(Theme.caption(11))
+                .font(Theme.caption(12))
                 .foregroundStyle(Theme.textTertiary)
             Spacer()
             Text(valeur)
-                .font(Theme.caption(11))
+                .font(Theme.caption(12))
                 .monospacedDigit()
                 .foregroundStyle(Theme.textSecondary)
-                .lineLimit(1)
+                .multilineTextAlignment(.trailing)
+                .textSelection(.enabled)
         }
     }
 
@@ -552,7 +445,7 @@ struct WorkTree3DView: View {
 
 // MARK: - Moteur géométrique et rendu 3D
 
-private struct SceneArborescence3D {
+struct SceneArborescence3D {
     enum CategorieNoeud: Int {
         case racine = 0
         case branche = 1
@@ -653,7 +546,7 @@ private struct SceneArborescence3D {
         }
 
         // 2. Branches (niveau 1) : max 7 sessions sur un anneau incliné en 3D
-        let branchesRetenues = Array(tree.branches.prefix(7))
+        let branchesRetenues = Array(tree.branches.prefix(7)).sorted { $0.id < $1.id }
         let totalBranches = max(branchesRetenues.count, 1)
         let aucuneBrancheActive = !branchesRetenues.contains(where: { $0.isActive })
 
@@ -668,7 +561,7 @@ private struct SceneArborescence3D {
 
             noeuds.append(
                 Noeud3D(
-                    identifiant: "branche-\(branche.id)-\(idxBranche)",
+                    identifiant: "branche-\(branche.id)",
                     parentIndice: 0,
                     libelle: titreBranche,
                     sousLibelle: "\(projetBranche) · \(branche.messages) msg",
@@ -696,7 +589,7 @@ private struct SceneArborescence3D {
                     teinteCible: teinteBranche,
                     actif: estActive,
                     pointille: false,
-                    nombreParticules: 3,
+                    nombreParticules: 2,
                     vitesseFlux: 0.58
                 )
             )
@@ -725,7 +618,7 @@ private struct SceneArborescence3D {
 
                     noeuds.append(
                         Noeud3D(
-                            identifiant: "outil-\(branche.id)-\(idxOutil)",
+                            identifiant: "outil-\(branche.id)-\(outil.name)",
                             parentIndice: indiceBranche,
                             libelle: texteCourt(outil.name, maxCaracteres: 16),
                             sousLibelle: detailOutil,
@@ -807,12 +700,12 @@ private struct SceneArborescence3D {
                     baseDel.z
                 )
 
-                let delActive = estActive || estEtatActif(delegation.state)
+                let delActive = estEtatActif(delegation.state)
                 let teinteDel = delActive ? Theme.warn : Theme.textTertiary
 
                 noeuds.append(
                     Noeud3D(
-                        identifiant: "del-\(branche.id)-\(delegation.id)-\(idxDel)",
+                        identifiant: "del-\(branche.id)-\(delegation.id)",
                         parentIndice: indiceBranche,
                         libelle: texteCourt(delegation.goal, maxCaracteres: 18),
                         sousLibelle: traduireEtatFR(delegation.state),
@@ -858,10 +751,10 @@ private struct SceneArborescence3D {
 
             noeuds.append(
                 Noeud3D(
-                    identifiant: "harnais-\(harnais.name)-\(idxHarnais)",
+                    identifiant: "harnais-\(harnais.name)",
                     parentIndice: 0,
                     libelle: texteCourt(harnais.name, maxCaracteres: 18),
-                    sousLibelle: harnais.active ? "actif" : "inactif",
+                    sousLibelle: harnais.active ? "présent" : "non détecté",
                     titreComplet: harnais.name,
                     position: posHarnais,
                     teinte: teinteHarnais,
@@ -880,8 +773,8 @@ private struct SceneArborescence3D {
                     pointControle: controleHarnais,
                     teinteSource: Theme.accent,
                     teinteCible: teinteHarnais,
-                    actif: harnais.active,
-                    pointille: !harnais.active,
+                    actif: false,
+                    pointille: true,
                     nombreParticules: 2,
                     vitesseFlux: 0.48
                 )
@@ -922,19 +815,20 @@ private struct SceneArborescence3D {
         lacet: Double,
         tangage: Double,
         parallaxe: CGPoint,
-        temps: TimeInterval
+        temps: TimeInterval,
+        zoom: Double = 1
     ) -> Noeud3D? {
         let centreEcran = CGPoint(
             x: taille.width * 0.5 + parallaxe.x * 10.0,
             y: taille.height * 0.52 + parallaxe.y * 8.0
         )
-        let echelleMonde = min(taille.width, taille.height) * 0.27
+        let echelleMonde = min(taille.width * 0.25, taille.height * 0.31) * zoom
         let focale = 3.5
         let distanceCamera = 3.35
 
         var candidats: [(noeud: Noeud3D, distance: CGFloat, profondeur: Double)] = []
         for (indice, noeud) in noeuds.enumerated() {
-            let oscillation = indice == 0 ? 0.0 : sin(temps * 1.45 + Double(indice) * 0.9) * 0.018
+            let oscillation = indice == 0 ? 0.0 : 0.0
             let pos = SIMD3<Double>(noeud.position.x, noeud.position.y + oscillation, noeud.position.z)
             guard let proj = projeter(
                 pos,
@@ -986,6 +880,7 @@ private struct SceneArborescence3D {
         tangage: Double,
         parallaxe: CGPoint,
         temps: TimeInterval,
+        zoom: Double = 1,
         idSurvole: String?,
         idSelectionne: String?,
         cheminActif: Set<Int>
@@ -994,7 +889,7 @@ private struct SceneArborescence3D {
             x: taille.width * 0.5 + parallaxe.x * 10.0,
             y: taille.height * 0.52 + parallaxe.y * 8.0
         )
-        let echelleMonde = min(taille.width, taille.height) * 0.27
+        let echelleMonde = min(taille.width * 0.25, taille.height * 0.31) * zoom
         let focale = 3.5
         let distanceCamera = 3.35
 
@@ -1034,7 +929,7 @@ private struct SceneArborescence3D {
         for (indice, noeud) in noeuds.enumerated() {
             let oscillation = indice == 0
                 ? 0.0
-                : sin(temps * 1.45 + Double(indice) * 0.9) * 0.018
+                : 0.0
             let posAnimee = SIMD3<Double>(
                 noeud.position.x,
                 noeud.position.y + oscillation,
@@ -1137,8 +1032,8 @@ private struct SceneArborescence3D {
             let aCible = (na.identifiant == idSurvole || na.identifiant == idSelectionne)
             let bCible = (nb.identifiant == idSurvole || nb.identifiant == idSelectionne)
             if aCible != bCible { return aCible }
-            if na.categorie == .racine { return true }
-            if nb.categorie == .racine { return false }
+            if na.categorie == .racine && nb.categorie != .racine { return true }
+            if nb.categorie == .racine && na.categorie != .racine { return false }
             if na.categorie.rawValue != nb.categorie.rawValue {
                 return na.categorie.rawValue < nb.categorie.rawValue
             }
@@ -1267,12 +1162,12 @@ private struct SceneArborescence3D {
             style: styleTrait
         )
 
-        if lien.actif || surbrillanceChemin {
+        if lien.actif {
             let totalParticules = max(2, min(3, lien.nombreParticules))
             for idxParticule in 0..<totalParticules {
                 let decalage = Double(idxParticule) / Double(totalParticules)
                 let phase = Double(indice) * 0.23 + decalage
-                let vitesse = surbrillanceChemin ? max(0.75, lien.vitesseFlux * 1.25) : lien.vitesseFlux
+                let vitesse = lien.vitesseFlux * 0.55
                 let progression = (temps * vitesse + phase).truncatingRemainder(dividingBy: 1.0)
                 let opaciteSinus = sin(progression * Double.pi) * facteurProfondeur
 
@@ -1304,7 +1199,7 @@ private struct SceneArborescence3D {
                     b: cible.ecran,
                     t: progression
                 )
-                let rayonHalo = CGFloat(7.8 * facteurProfondeur)
+                let rayonHalo = CGFloat(5.0 * facteurProfondeur)
                 let rectHalo = CGRect(
                     x: ptParticule.x - rayonHalo,
                     y: ptParticule.y - rayonHalo,
@@ -1345,7 +1240,7 @@ private struct SceneArborescence3D {
         let facteur = CGFloat(max(0.52, min(1.48, echelle)))
         let base: CGFloat
         switch noeud.categorie {
-        case .racine: base = 24.0
+        case .racine: base = 19.0
         case .branche: base = 11.5
         case .harnais: base = 9.0
         case .outil: base = 6.8
@@ -1382,7 +1277,7 @@ private struct SceneArborescence3D {
         let centre = projete.ecran
 
         if noeud.categorie == .racine || noeud.actif || estDansChemin || estCible {
-            let rayonBloomExterne = r * (noeud.categorie == .racine ? 3.8 : 3.2)
+            let rayonBloomExterne = r * (noeud.categorie == .racine ? 2.6 : 2.1)
             let rectBloomExterne = CGRect(
                 x: centre.x - rayonBloomExterne,
                 y: centre.y - rayonBloomExterne,
@@ -1393,7 +1288,7 @@ private struct SceneArborescence3D {
                 Path(ellipseIn: rectBloomExterne),
                 with: .radialGradient(
                     Gradient(colors: [
-                        noeud.teinte.opacity((estCible ? 0.34 : 0.24) * opaciteProfondeur),
+                        noeud.teinte.opacity((estCible ? 0.24 : 0.13) * opaciteProfondeur),
                         noeud.teinte.opacity(0.07 * opaciteProfondeur),
                         .clear
                     ]),
@@ -1403,7 +1298,7 @@ private struct SceneArborescence3D {
                 )
             )
 
-            let rayonBloomInterne = r * 1.95
+            let rayonBloomInterne = r * 1.55
             let rectBloomInterne = CGRect(
                 x: centre.x - rayonBloomInterne,
                 y: centre.y - rayonBloomInterne,
@@ -1414,7 +1309,7 @@ private struct SceneArborescence3D {
                 Path(ellipseIn: rectBloomInterne),
                 with: .radialGradient(
                     Gradient(colors: [
-                        noeud.teinte.opacity((estCible ? 0.50 : 0.38) * opaciteProfondeur),
+                        noeud.teinte.opacity((estCible ? 0.38 : 0.24) * opaciteProfondeur),
                         .clear
                     ]),
                     center: centre,
@@ -1507,7 +1402,7 @@ private struct SceneArborescence3D {
         zonesOccupees: inout [CGRect]
     ) {
         let proximite = max(0.50, min(1.48, projete.echelle))
-        let opaciteProfondeur = max(0.34, min(1.0, (proximite - 0.42) * 1.08))
+        let opaciteProfondeur = max(0.72, min(1.0, (proximite - 0.42) * 1.08))
 
         if !estCible && !estDansChemin {
             if (noeud.categorie == .outil || noeud.categorie == .delegation) && opaciteProfondeur < 0.52 {
@@ -1527,7 +1422,7 @@ private struct SceneArborescence3D {
             policePrincipale = Theme.body(12, weight: .medium)
             couleurPrincipale = Theme.textPrimary.opacity(estCible ? 1.0 : opaciteProfondeur)
         case .outil, .delegation:
-            policePrincipale = Theme.caption(10.5)
+            policePrincipale = Theme.caption(11.5)
             couleurPrincipale = (estCible ? Theme.textPrimary : Theme.textSecondary).opacity(estCible ? 1.0 : opaciteProfondeur)
         }
 
@@ -1598,8 +1493,8 @@ private struct SceneArborescence3D {
             )
             let dansBornes = rectCandidat.minX >= 16 &&
                 rectCandidat.maxX <= tailleCanvas.width - 16 &&
-                rectCandidat.minY >= 104 &&
-                rectCandidat.maxY <= tailleCanvas.height - 54
+                rectCandidat.minY >= 16 &&
+                rectCandidat.maxY <= tailleCanvas.height - 16
             guard dansBornes || noeud.categorie == .racine else { continue }
 
             let enCollision = zonesOccupees.contains { $0.intersects(rectCandidat) }
