@@ -26,7 +26,7 @@ struct ContentRoot: View {
     private var content: some View {
         switch store.selection {
         case .now: NowView()
-        case .agents: AgentsView()
+        case .agents: FluxView()
         case .flux: FluxView()
         case .tasks: TasksView()
         case .costs: CostsView()
@@ -57,8 +57,8 @@ struct Sidebar: View {
             .padding(.top, 22)
             .padding(.bottom, 16)
 
-            ForEach(Screen.allCases.filter { $0 != .settings }) { screen in
-                SidebarItem(screen: screen, isActive: store.selection == screen) {
+            ForEach(Screen.allCases.filter { $0 != .settings && $0 != .agents }) { screen in
+                SidebarItem(screen: screen, isActive: store.selection == screen || (screen == .flux && store.selection == .agents)) {
                     store.selection = screen
                 }
             }
@@ -96,8 +96,8 @@ struct SidebarItem: View {
                 Text(screen.title)
                     .font(Theme.body(13, weight: isActive ? .medium : .regular))
                 Spacer()
-                if screen == .agents && !store0Active().isEmpty {
-                    Text("\(store0Active().count)")
+                if screen == .flux && store.worktree.activeSessions > 0 {
+                    Text("\(store.worktree.activeSessions)")
                         .font(Theme.micro())
                         .foregroundStyle(Theme.textTertiary)
                 }
@@ -113,7 +113,6 @@ struct SidebarItem: View {
     }
 
     @EnvironmentObject private var store: AppStore
-    private func store0Active() -> [Agent] { store.activeAgents }
 }
 
 struct LocalStatusCard: View {
@@ -123,13 +122,17 @@ struct LocalStatusCard: View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 6) {
                 Circle().fill(Theme.ok).frame(width: 7, height: 7)
-                Text("Tout est local")
+                Text("Stockage local")
                     .font(Theme.body(12, weight: .medium))
                     .foregroundStyle(Theme.textPrimary)
             }
             Text("\(store.snapshot.software.count) logiciels · \(store.activeAgents.count) agents actifs")
                 .font(Theme.caption(10.5))
                 .foregroundStyle(Theme.textSecondary)
+            Text("Traitements externes selon les fonctions utilisées")
+                .font(Theme.caption(10.5))
+                .foregroundStyle(Theme.textSecondary)
+                .fixedSize(horizontal: false, vertical: true)
             Divider().overlay(Theme.borderSoft)
             Text(store.engineVersion)
                 .font(Theme.caption(9.5))

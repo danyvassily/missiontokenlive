@@ -13,14 +13,14 @@ SwiftUI · moteur Rust · SQLite · pont C · macOS 14+ · Apple Silicon.
 | Écran | Contenu |
 |---|---|
 | **Maintenant** | Hermès en vedette, agents actifs, timeline, alertes |
-| **Agents** | Graphe radial Hermès → sous-agents → outils externes |
+| **Agents & sessions** | Panneau intégré à Flux, avec sélection et détail des sessions |
 | **Tâches** | Liste filtrable + détail (tokens entrée/sortie, coût, erreur) |
 | **Coûts & usage** | Jour / semaine / mois, évolution quotidienne, répartitions |
 | **Providers** | Cartes API, solde réel ou « Solde non disponible via API », abonnements à part |
 | **Logiciels** | Hermès, OpenCode, ChatGPT, Gemini, Antigravity : ouvert / premier plan / arrière-plan / fermé |
 | **Projets** | Actifs, archivés, corbeille 30 jours |
 | **Flux** | Carte animée : Hermès → logiciels → providers, pulsations = sessions en cours |
-| **Cerveau** | Corpus gbrain : faits, sources, entités, derniers faits (lecture seule) |
+| **Cerveau** | Recherche locale, historique, propositions à valider et sources |
 | **Réglages** | Budget, seuils, providers, confidentialité, widget |
 
 Plus une **pilule de barre de menus** à quatre états (calme, actif, multi-tâches, alerte) avec
@@ -160,8 +160,7 @@ savent réellement : nombre de faits atomiques, de chunks, de sources, entités 
 derniers faits avec leur provenance.
 
 Ce corpus est produit par `~/gbrain` (SQLite FTS5), partagé par Hermès et les harnais de code via
-MCP (`gbrain_recall`, `gbrain_remember`). L'application **n'écrit jamais** dans le cerveau et
-n'appelle aucune API : elle observe.
+MCP (`gbrain_recall`, `gbrain_remember`). Les recherches locales et validations explicites passent par la CLI gbrain. Les compteurs sont lus via Rust ; le statut API est vérifié sur localhost.
 
 ```bash
 ~/gbrain/bin/gbrain ingest        # relit les notes (idempotent)
@@ -204,3 +203,11 @@ Désactiver :
 Réactiver :
 
     launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.dany.missiontokenlive.autostart.plist
+
+## Version 0.1.1
+
+Cerveau dispose de trois onglets : Mémoire, À valider et Sources. La recherche reste locale (`gbrain search --local`), avec filtres de type, entité, source et historique. Les propositions n’entrent dans la mémoire qu’après une validation explicite. Nécessite gbrain 1.1 et une première ingestion de migration, après sauvegarde SQLite.
+
+Flux regroupe la carte animée et le panneau Agents & sessions. Sa topologie est conservée entre les images, les identités de nœuds restent stables, la rotation est facultative, et pause/zoom/recentrage sont disponibles. Les animations respectent Réduire les animations dans macOS et se suspendent en arrière-plan. Une délégation terminée n’est plus animée comme une tâche en cours.
+
+La mention Stockage local distingue le stockage sur le Mac des fonctions qui contactent des fournisseurs externes. L’écran Cerveau affiche séparément disponibilité de la base, commande locale et API.

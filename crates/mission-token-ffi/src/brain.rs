@@ -20,6 +20,8 @@ pub struct BrainFact {
     pub kind: String,
     pub entity: Option<String>,
     pub source: Option<String>,
+    pub at: Option<String>,
+    pub status: String,
 }
 
 #[derive(Serialize)]
@@ -28,6 +30,8 @@ pub struct BrainSource {
     pub kind: String,
     pub facts: i64,
     pub present: bool,
+    pub ingested_at: Option<String>,
+    pub last_error: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -45,19 +49,17 @@ pub struct BrainStats {
     #[serde(rename = "sourceList")]
     pub sources: Vec<BrainSource>,
     pub never: Vec<String>,
+    pub pending: i64,
+    pub superseded: i64,
+    pub last_error: Option<String>,
 }
 
 /// Périmètre exclu, affiché tel quel dans l'interface : l'utilisateur doit pouvoir
 /// vérifier ce que le cerveau ne lit pas, pas seulement ce qu'il lit.
-const NEVER: &[&str] = &[
-    "contenu des conversations et des prompts",
-    "captures d'écran, frappe clavier, presse-papiers",
-    "clés, jetons et mots de passe",
-    "données de santé, localisation, identité",
-];
+const NEVER: &[&str] = &["Aucune capture d’écran, frappe clavier ou presse-papiers par gbrain"];
 
 pub fn default_path() -> PathBuf {
-    dirs_home().join(".gbrain").join("gbrain.sqlite")
+    std::env::var("GBRAIN_DIR").map(PathBuf::from).unwrap_or_else(|_| dirs_home().join(".gbrain")).join("gbrain.sqlite")
 }
 
 fn dirs_home() -> PathBuf {
@@ -93,127 +95,72 @@ pub fn is_polluting_fact(text: &str, source: Option<&str>) -> bool {
 
 pub fn read_stats(path: Option<PathBuf>) -> BrainStats {
     let path = path.unwrap_or_else(default_path);
-    let shown = path.to_string_lossy().replace(&dirs_home().to_string_lossy().to_string(), "~");
+    let home = dirs_home();
+    let shown = path.to_string_lossy().replace(&home.to_string_lossy().to_string(), "~");
     let mut out = BrainStats {
-        available: false,
-        path: shown,
-        facts: 0,
-        chunks: 0,
-        source_count: 0,
-        entities: 0,
-        last_ingest: None,
-        top_entities: vec![],
-        recent: vec![],
-        sources: vec![],
-        never: NEVER.iter().map(|s| s.to_string()).collect(),
+        available: false, path: shown, facts: 0, chunks: 0, source_count: 0, entities: 0,
+        last_ingest: None, top_entities: vec![], recent: vec![], sources: vec![],
+        never: NEVER.iter().map(|s| s.to_string()).collect(), pending: 0, superseded: 0, last_error: None,
     };
-    if !path.exists() {
-        return out;
-    }
-    let Ok(conn) = Connection::open_with_flags(&path, OpenFlags::SQLITE_OPEN_READ_ONLY) else {
-        return out;
-    };
+    let Ok(conn) = Connection::open_with_flags(&path, OpenFlags::SQLITE_OPEN_READ_ONLY) else { return out; };
+    if conn.query_row("SELECT COUNT(*) FROM facts", [], |r| r.get::<_,i64>(0)).is_err() { return out; }
     out.available = true;
-
-    let count = |table: &str| -> i64 {
-        conn.query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |r| r.get::<_, i64>(0))
-            .unwrap_or(0)
+    let modern = conn.prepare("SELECT status FROM facts LIMIT 0").is_ok();
+    let active = if modern { " WHERE status='active'" } else { "" };
+    let count = |sql: &str| conn.query_row(sql, [], |r| r.get::<_,i64>(0)).unwrap_or(0);
+    out.facts = count(&format!("SELECT COUNT(*) FROM facts{active}"));
+    out.chunks = count(&format!("SELECT COUNT(*) FROM chunks{active}"));
+    out.pending = count("SELECT COUNT(*) FROM candidates WHERE status='pending'");
+    if modern { out.superseded = count("SELECT COUNT(*) FROM facts WHERE status='superseded'"); }
+    out.last_ingest = if modern {
+        conn.query_row("SELECT v FROM meta WHERE k='last_ingest'", [], |r| r.get::<_,String>(0)).ok()
+    } else {
+        conn.query_row("SELECT MAX(ingested_at) FROM sources", [], |r| r.get::<_,Option<String>>(0)).ok().flatten()
     };
-    out.facts = count("facts");
-    out.chunks = count("chunks");
-    out.source_count = count("sources");
-    out.entities = conn
-        .query_row("SELECT COUNT(DISTINCT entity) FROM facts WHERE entity IS NOT NULL", [], |r| r.get::<_, i64>(0))
-        .unwrap_or(0);
-    out.last_ingest = conn
-        .query_row("SELECT MAX(ingested_at) FROM sources", [], |r| r.get::<_, Option<String>>(0))
-        .ok()
-        .flatten();
-
-    if let Ok(mut st) = conn.prepare(
-        "SELECT entity, COUNT(*) n FROM facts WHERE entity IS NOT NULL GROUP BY entity ORDER BY n DESC LIMIT 6",
-    ) {
-        if let Ok(rows) = st.query_map([], |r| {
-            Ok(BrainEntity { name: r.get(0)?, facts: r.get(1)? })
-        }) {
-            out.top_entities = rows.flatten().collect();
-        }
+    let entity_filter = if modern { " AND status='active'" } else { "" };
+    if let Ok(mut st) = conn.prepare(&format!("SELECT entity,COUNT(*) n FROM facts WHERE entity IS NOT NULL{entity_filter} GROUP BY entity ORDER BY n DESC")) {
+        if let Ok(rows) = st.query_map([], |r| Ok(BrainEntity { name:r.get(0)?, facts:r.get(1)? })) { out.top_entities=rows.flatten().collect(); }
     }
-
-    if let Ok(mut st) = conn.prepare(
-        "SELECT s.path, s.kind, COUNT(f.id) FROM sources s
-         LEFT JOIN facts f ON f.source_id = s.id
-         GROUP BY s.path ORDER BY COUNT(f.id) DESC",
-    ) {
+    out.entities = out.top_entities.len() as i64;
+    let fact_filter = if modern { " AND f.status='active'" } else { "" };
+    let error_column = if modern { "s.last_error" } else { "NULL" };
+    if let Ok(mut st) = conn.prepare(&format!("SELECT s.path,s.kind,COUNT(f.id),s.ingested_at,{error_column} FROM sources s LEFT JOIN facts f ON f.source_id=s.id{fact_filter} GROUP BY s.id ORDER BY COUNT(f.id) DESC")) {
         if let Ok(rows) = st.query_map([], |r| {
-            let raw: String = r.get(0)?;
-            Ok(BrainSource {
-                path: raw.replace(&dirs_home().to_string_lossy().to_string(), "~"),
-                kind: r.get(1)?,
-                facts: r.get(2)?,
-                present: true,
-            })
-        }) {
-            out.sources = rows.flatten().collect();
-        }
+            let raw:String=r.get(0)?;
+            let actual = if let Some(rel)=raw.strip_prefix("pdf:") {
+                path.parent().unwrap_or(&home).join(rel)
+            } else if raw.starts_with("wa:") { path.parent().unwrap_or(&home).join("wa.sqlite") }
+            else if let Some(rel)=raw.strip_prefix("~/") { home.join(rel) }
+            else { PathBuf::from(&raw) };
+            Ok(BrainSource { path:raw.replace(&home.to_string_lossy().to_string(),"~"), kind:r.get(1)?, facts:r.get(2)?,
+                present:raw.starts_with("gbrain:") || actual.exists(), ingested_at:r.get(3)?,last_error:r.get(4)? })
+        }) { out.sources=rows.flatten().collect(); }
     }
-    // Sources déclarées dans la configuration mais absentes du disque.
-    if let Ok(raw_cfg) = std::fs::read_to_string(dirs_home().join(".gbrain").join("config.json")) {
-        if let Ok(cfg) = serde_json::from_str::<serde_json::Value>(&raw_cfg) {
-            if let Some(list) = cfg.get("sources").and_then(|v| v.as_array()) {
-                for entry in list {
-                    let Some(path) = entry.get("path").and_then(|v| v.as_str()) else { continue };
-                    let expanded = if let Some(rest) = path.strip_prefix("~/") {
-                        dirs_home().join(rest)
-                    } else {
-                        std::path::PathBuf::from(path)
-                    };
-                    let shown = path.to_string();
-                    if expanded.exists() {
-                        if !out.sources.iter().any(|s| s.path == shown) {
-                            out.sources.push(BrainSource {
-                                path: shown,
-                                kind: entry.get("kind").and_then(|v| v.as_str()).unwrap_or("memory").to_string(),
-                                facts: 0,
-                                present: true,
-                            });
-                        }
-                    } else {
-                        out.sources.push(BrainSource {
-                            path: shown,
-                            kind: entry.get("kind").and_then(|v| v.as_str()).unwrap_or("memory").to_string(),
-                            facts: 0,
-                            present: false,
-                        });
+    // Only add a configured root when none of its files is represented in the database.
+    let config = path.parent().unwrap_or(&home).join("config.json");
+    if let Ok(raw)=std::fs::read_to_string(config) {
+        if let Ok(cfg)=serde_json::from_str::<serde_json::Value>(&raw) {
+            if let Some(entries)=cfg.get("sources").and_then(|v|v.as_array()) {
+                for entry in entries {
+                    let Some(raw)=entry.get("path").and_then(|v|v.as_str()) else {continue};
+                    let shown=raw.replace(&home.to_string_lossy().to_string(),"~");
+                    let expanded=if let Some(rest)=raw.strip_prefix("~/") {home.join(rest)} else {PathBuf::from(raw)};
+                    if !out.sources.iter().any(|s|s.path==shown || s.path.starts_with(&format!("{shown}/"))) {
+                        out.sources.push(BrainSource {path:shown,kind:entry.get("kind").and_then(|v|v.as_str()).unwrap_or("memory").to_string(),facts:0,present:expanded.exists(),ingested_at:None,last_error:None});
                     }
                 }
             }
         }
     }
-    out.sources.sort_by(|a, b| b.facts.cmp(&a.facts));
-
-    if let Ok(mut st) = conn.prepare(
-        "SELECT f.text, f.kind, f.entity, s.path FROM facts f
-         LEFT JOIN sources s ON s.id = f.source_id
-         ORDER BY f.id DESC LIMIT 80",
-    ) {
-        if let Ok(rows) = st.query_map([], |r| {
-            let raw: Option<String> = r.get(3)?;
-            Ok(BrainFact {
-                text: r.get(0)?,
-                kind: r.get(1)?,
-                entity: r.get(2)?,
-                source: raw.map(|p| {
-                    p.replace(&dirs_home().to_string_lossy().to_string(), "~")
-                }),
-            })
-        }) {
-            out.recent = rows
-                .flatten()
-                .filter(|f| !is_polluting_fact(&f.text, f.source.as_deref()))
-                .take(8)
-                .collect();
-        }
+    out.source_count=out.sources.len() as i64;
+    out.last_error=out.sources.iter().find_map(|s|s.last_error.clone());
+    let status_column = if modern {"f.status"} else {"'active'"};
+    let condition=if modern {" WHERE f.status='active'"} else {""};
+    if let Ok(mut st)=conn.prepare(&format!("SELECT f.text,f.kind,f.entity,s.path,f.created_at,{status_column} FROM facts f LEFT JOIN sources s ON s.id=f.source_id{condition} ORDER BY f.id DESC LIMIT 80")) {
+        if let Ok(rows)=st.query_map([],|r| {
+            let raw:Option<String>=r.get(3)?;
+            Ok(BrainFact {text:r.get(0)?,kind:r.get(1)?,entity:r.get(2)?,source:raw.map(|p|p.replace(&home.to_string_lossy().to_string(),"~")),at:r.get(4)?,status:r.get(5)?})
+        }) {out.recent=rows.flatten().filter(|f|!is_polluting_fact(&f.text,f.source.as_deref())).take(8).collect();}
     }
     out
 }
@@ -221,6 +168,28 @@ pub fn read_stats(path: Option<PathBuf>) -> BrainStats {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn active_counts_and_missing_sources_are_truthful() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("brain.sqlite");
+        let conn = Connection::open(&path).unwrap();
+        conn.execute_batch("CREATE TABLE facts(id INTEGER,text TEXT,kind TEXT,entity TEXT,source_id INTEGER,created_at TEXT,status TEXT);
+          CREATE TABLE chunks(status TEXT); CREATE TABLE sources(id INTEGER,path TEXT,kind TEXT,ingested_at TEXT,last_error TEXT);
+          CREATE TABLE candidates(status TEXT); CREATE TABLE meta(k TEXT,v TEXT);
+          INSERT INTO sources VALUES(1,'/missing/source.md','memory',NULL,NULL);
+          INSERT INTO facts VALUES(1,'Active information','memory','Alpha',1,NULL,'active');
+          INSERT INTO facts VALUES(2,'Archived information','memory','Beta',1,NULL,'superseded');
+          INSERT INTO candidates VALUES('pending');").unwrap();
+        let stats = read_stats(Some(path));
+        assert!(stats.available);
+        assert_eq!(stats.facts, 1);
+        assert_eq!(stats.superseded, 1);
+        assert_eq!(stats.pending, 1);
+        assert_eq!(stats.entities, 1);
+        assert!(!stats.sources[0].present);
+        assert!(stats.last_ingest.is_none());
+    }
 
     #[test]
     fn filters_structural_and_internal_people_lines() {

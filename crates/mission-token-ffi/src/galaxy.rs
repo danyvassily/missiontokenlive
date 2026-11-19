@@ -94,15 +94,19 @@ pub fn build(db_path: &str) -> Galaxy {
     let Ok(conn) = Connection::open_with_flags(db_path, OpenFlags::SQLITE_OPEN_READ_ONLY) else {
         return galaxy;
     };
+    let modern = conn.prepare("SELECT status FROM facts LIMIT 0").is_ok();
+    let view = if modern { "CREATE TEMP VIEW current_facts AS SELECT * FROM facts WHERE status='active'" }
+               else { "CREATE TEMP VIEW current_facts AS SELECT * FROM facts" };
+    if conn.execute_batch(view).is_err() { return galaxy; }
     galaxy.available = true;
 
     let count = |sql: &str| -> i64 {
         conn.query_row(sql, [], |r| r.get::<_, i64>(0)).unwrap_or(0)
     };
-    galaxy.facts = count("SELECT COUNT(*) FROM facts");
+    galaxy.facts = count("SELECT COUNT(*) FROM current_facts");
     galaxy.sources = count("SELECT COUNT(*) FROM sources");
     galaxy.entities = count(
-        "SELECT COUNT(DISTINCT entity) FROM facts WHERE entity IS NOT NULL AND entity <> ''",
+        "SELECT COUNT(DISTINCT entity) FROM current_facts WHERE entity IS NOT NULL AND entity <> ''",
     );
 
     // Source 0 : gbrain lui-même, le centre de la galaxie.
@@ -143,7 +147,7 @@ pub fn build(db_path: &str) -> Galaxy {
     // Couche 2 : entités les plus citées.
     let mut entity_index: Vec<(String, usize)> = vec![];
     if let Ok(mut stmt) = conn.prepare(
-        "SELECT entity, COUNT(*) c FROM facts WHERE entity IS NOT NULL AND entity <> ''
+        "SELECT entity, COUNT(*) c FROM current_facts WHERE entity IS NOT NULL AND entity <> ''
          GROUP BY entity ORDER BY c DESC LIMIT 28",
     ) {
         if let Ok(rows) = stmt.query_map([], |r| {
@@ -172,7 +176,7 @@ pub fn build(db_path: &str) -> Galaxy {
 
     // Couche 3 : échantillon de faits, reliés à leur entité et à leur source.
     if let Ok(mut stmt) = conn.prepare(
-        "SELECT f.text, f.entity, s.kind FROM facts f JOIN sources s ON s.id = f.source_id
+        "SELECT f.text, f.entity, s.kind FROM current_facts f JOIN sources s ON s.id = f.source_id
          ORDER BY f.id DESC LIMIT 260",
     ) {
         if let Ok(rows) = stmt.query_map([], |r| {
@@ -209,7 +213,7 @@ pub fn build(db_path: &str) -> Galaxy {
 
     // Fiches contacts : ce que le modèle a retenu, sans les conversations.
     if let Ok(mut stmt) = conn.prepare(
-        "SELECT text, entity FROM facts WHERE text LIKE 'Contact WhatsApp %' ORDER BY id DESC",
+        "SELECT text, entity FROM current_facts WHERE text LIKE 'Contact WhatsApp %' ORDER BY id DESC",
     ) {
         if let Ok(rows) = stmt.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, Option<String>>(1)?))) {
             for (text, entity) in rows.flatten() {
